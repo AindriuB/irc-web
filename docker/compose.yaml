@@ -15,6 +15,26 @@
 # server on the homelab's network.
 
 services:
+  irc-web:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: irc-web:local
+    container_name: irc-web
+    restart: unless-stopped
+    depends_on:
+      ergo:
+        condition: service_healthy
+    environment:
+      # Inside the compose network the local server is reachable by service
+      # name. Loopback here would be this container, which runs no IRC server.
+      LOCAL_IRC_HOST: ergo
+    ports:
+      # Bound to all interfaces deliberately: the point of running it this way
+      # is to reach it from another machine. It has no authentication, so keep
+      # it to a network you trust.
+      - "8081:8081"
+
   ergo:
     image: ghcr.io/ergochat/ergo:v2.14.0
     container_name: irc-web-ergo

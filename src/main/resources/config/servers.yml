@@ -19,7 +19,10 @@ irc:
 
     - id: local
       name: Local (ergo, docker compose)
-      host: 127.0.0.1
+      # Placeholder, because "local" means two different addresses depending on
+      # where this is running. On the host it is loopback; inside a container it
+      # is the compose service name, and loopback there is the container itself.
+      host: ${LOCAL_IRC_HOST:127.0.0.1}
       port: 6667
       tls: false
       sasl: false
@@ -33,7 +36,7 @@ irc:
 
     - id: local-tls
       name: Local (ergo, TLS)
-      host: localhost
+      host: ${LOCAL_IRC_HOST:localhost}
       port: 6697
       tls: true
       sasl: true

@@ -1,0 +1,75 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    services:
+      # The integration tests need a real IRC server. Running one as a service
+      # container is what makes them run in CI at all rather than skipping.
+      ergo:
+        image: ghcr.io/ergochat/ergo:v2.14.0
+        ports:
+          - 6667:6667
+        options: >-
+          --health-cmd "nc -z 127.0.0.1 6667 || exit 1"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 10
+          --health-start-period 10s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: temurin
+          cache: maven
+
+      - name: Confirm the IRC server is actually reachable
+        run: |
+          # LocalIrcServerIT skips when it cannot reach a server, which keeps the
+          # suite usable on a laptop and would let CI pass having tested nothing.
+          # Fail here instead, where the reason is obvious.
+          for i in $(seq 1 30); do
+            if timeout 2 bash -c '</dev/tcp/127.0.0.1/6667'; then
+              echo "IRC server reachable after ${i} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::no IRC server on 127.0.0.1:6667; the tests would have skipped"
+          exit 1
+
+      - name: Build and test
+        run: mvn -B --no-transfer-progress verify
+
+      - name: Confirm the integration tests ran
+        run: |
+          # Belt and braces for the same failure mode: a suite that runs nothing
+          # reports success. This is how the *IT naming was found to be invisible
+          # to surefire in the first place.
+          report=target/failsafe-reports
+          test -d "$report" || { echo "::error::no failsafe reports"; exit 1; }
+          ran=$(grep -ho 'tests="[0-9]*"' "$report"/*.xml | grep -o '[0-9]*' | paste -sd+ | bc)
+          echo "integration tests run: ${ran:-0}"
+          test "${ran:-0}" -gt 0 || { echo "::error::integration tests did not run"; exit 1; }
+
+      - name: Keep the reports when something fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            target/surefire-reports/
+            target/failsafe-reports/
+          if-no-files-found: ignore

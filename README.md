@@ -1,5 +1,7 @@
 # irc-web
 
+[![build](https://github.com/AindriuB/irc-web/actions/workflows/build.yml/badge.svg)](https://github.com/AindriuB/irc-web/actions/workflows/build.yml)
+
 A Spring Boot web front end for [irc-client](https://github.com/AindriuB/irc-client),
 and the exercise that proves the library works outside its own test suite.
 
@@ -10,10 +12,28 @@ being fanned out to browsers, and connections that come and go as people reload 
 
 ## Running it
 
+Everything in containers:
+
 ```bash
-docker compose -f docker/compose.yaml up -d    # local IRC server
-mvn spring-boot:run                            # http://localhost:8081
+docker compose -f docker/compose.yaml up -d --build
+# http://localhost:8081
 ```
+
+Or the app on the host against a containerised IRC server, which is the better
+loop while changing the app:
+
+```bash
+docker compose -f docker/compose.yaml up -d ergo
+mvn spring-boot:run
+```
+
+`local` means a different address in each case — loopback on the host, the compose
+service name inside the network — so `servers.yml` takes it from `LOCAL_IRC_HOST`,
+which the compose file sets. Loopback inside the app container is the app container,
+which runs no IRC server, and the failure looks like a connection refused with no
+obvious cause.
+
+Published images are at `ghcr.io/aindriub/irc-web`.
 
 Pick a server, choose a nick, connect. `/join #chan`, `/part`, `/msg nick text` and
 `/raw <line>` all work; **wire traffic** in the top right shows every line the server
@@ -82,8 +102,14 @@ step, just three files in `static/`.
 ## Tests
 
 ```bash
-mvn test                                       # needs the local server running
+mvn verify                                     # needs the local server running
 ```
+
+Note `verify`, not `test`. The tests are named `*IT`, which surefire does not pick
+up — `mvn test` ran nothing at all until failsafe was wired in, and reported success
+while doing it. CI asserts both that the IRC server is reachable *and* that a non-zero
+number of integration tests ran, because a suite that silently runs nothing is worse
+than no suite.
 
 `LocalIrcServerIT` drives the whole stack against ergo: registration, joining and
 member lists, a message travelling between two browser sessions through the IRC

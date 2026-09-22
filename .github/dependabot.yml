@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # The base images go stale too, and a JRE base image going stale is a
+  # security update rather than a convenience one.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
