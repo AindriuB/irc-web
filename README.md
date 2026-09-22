@@ -8,10 +8,10 @@ It keeps your networks, nicks, channels and credentials in its own database, so 
 client is set up once rather than on every device, and any browser on your network is
 a full client with nothing installed.
 
-**The connection currently lasts as long as the browser tab.** Closing it disconnects
-you, because leaving the session running would otherwise strand a copy of you in every
-channel under the same nick on reload. Staying connected while the browser is away is
-a bouncer, and is tracked as work rather than claimed as working.
+The connection belongs to your account, not to the tab. Close the browser and you stay
+on the network; open it again — from another machine if you like — and it attaches to
+the session that was already running and replays what was said while you were gone.
+Only asking to disconnect leaves the network.
 
 Built on [irc-client](https://github.com/AindriuB/irc-client), a Java IRC library
 from the same author.
@@ -178,6 +178,32 @@ IRC_WEB_ADMIN_PASSWORD=the-new-one docker compose -f docker/compose.yaml up -d i
 
 Leave `IRC_WEB_ADMIN_PASSWORD` unset instead and the next browser gets the setup page
 again, which is the same thing without editing the database by hand.
+
+## Staying connected
+
+Signing in and connecting starts a session held by the server under your account.
+From then on:
+
+- Closing the tab, losing the network or shutting the laptop **detaches**. The IRC
+  connection stays where it is, in its channels, under its nick.
+- Opening the page again attaches to it. The window is rebuilt from the session —
+  status, channels, who is in them — and the last **500 messages** are replayed.
+- **Disconnect** is the only thing that leaves the network.
+
+The replay is bracketed, so reattaching empties the window before refilling it. A
+socket that drops and comes back would otherwise show every recent message twice.
+Wire traffic is not kept: it is high volume and only interesting live, and keeping it
+would push the actual conversation out of the backlog within seconds.
+
+Backlog is in memory, so restarting the application loses it along with the
+connections. Persisting it is a separate piece of work.
+
+**One network at a time.** A session is keyed by account, which makes "am I already
+connected?" a question with a single answer, and makes a second connection under the
+same nick something you are told about rather than something that quietly happens.
+Two browsers signed in as the same account share the one session — the second to
+attach takes over, rather than both receiving half the traffic. Several networks at
+once needs a window that can show them, which this does not have yet.
 
 ## What is stored, and how
 

@@ -12,8 +12,10 @@ import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.web.socket.CloseStatus;
@@ -23,6 +25,12 @@ import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.http.HttpHeaders;
 import org.springframework.web.socket.WebSocketHttpHeaders;
+
+import org.springframework.security.crypto.password.PasswordEncoder;
+
+import io.github.aindriub.ircweb.irc.IrcSessionRegistry;
+import io.github.aindriub.ircweb.store.AppUserEntity;
+import io.github.aindriub.ircweb.store.AppUserRepository;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,8 +62,25 @@ class LocalIrcServerIT {
 
     private static final ObjectMapper JSON = new ObjectMapper();
 
+    /**
+     * A second account, because a session now belongs to an account rather than to
+     * a socket: two browsers signed in as the same person share one connection, so
+     * a test that needs two connections needs two people.
+     */
+    private static final String OTHER_USER = "tester2";
+    private static final String OTHER_PASSWORD = "other-password";
+
     @LocalServerPort
     private int port;
+
+    @Autowired
+    private IrcSessionRegistry registry;
+
+    @Autowired
+    private AppUserRepository users;
+
+    @Autowired
+    private PasswordEncoder encoder;
 
     private WebSocketSession socket;
 
@@ -65,11 +90,22 @@ class LocalIrcServerIT {
                 "local IRC server not running: docker compose -f docker/compose.yaml up -d");
     }
 
+    @BeforeEach
+    void createTheSecondAccount() {
+        if (!users.existsById(OTHER_USER)) {
+            users.save(new AppUserEntity(OTHER_USER, encoder.encode(OTHER_PASSWORD)));
+        }
+    }
+
     @AfterEach
-    void closeSocket() throws IOException {
+    void closeSocketAndSession() throws IOException {
         if (socket != null && socket.isOpen()) {
             socket.close(CloseStatus.NORMAL);
         }
+        // Closing the socket no longer ends the IRC session, which is the point of
+        // the feature and a leak between tests if the test does not say so.
+        registry.end("tester");
+        registry.end(OTHER_USER);
     }
 
     @Test
@@ -113,7 +149,7 @@ class LocalIrcServerIT {
         WebSocketSession other = null;
         try {
             Collector speakerEvents = new Collector();
-            other = connect(speakerEvents);
+            other = connectAs(OTHER_USER, OTHER_PASSWORD, speakerEvents);
             other.sendMessage(new TextMessage(connectCommand("webtest4", "#irc-web-room")));
             speakerEvents.await(e -> "status".equals(text(e, "type"))
                     && "ready".equals(text(e, "state")));
@@ -147,6 +183,92 @@ class LocalIrcServerIT {
         assertTrue("in".equals(text(raw, "direction")));
     }
 
+    @Test
+    @DisplayName("the IRC connection outlives the browser socket")
+    void theSessionSurvivesTheSocket() throws Exception {
+        Collector first = open();
+        send(connectCommand("webtest6", "#irc-web-bnc"));
+        first.await(e -> "status".equals(text(e, "type")) && "ready".equals(text(e, "state")));
+
+        // The browser goes away, as a closed tab or a shut laptop would.
+        socket.close(CloseStatus.NORMAL);
+        assertTrue(registry.find("tester").isPresent(),
+                "closing the socket must not take the IRC connection with it");
+
+        // Coming back attaches to what was already running rather than starting
+        // something new: same nick, same network, no second registration.
+        Collector second = new Collector();
+        socket = connect(second);
+
+        JsonNode attached = second.await(e -> "attached".equals(text(e, "type")));
+        assertTrue("local".equals(text(attached, "state")),
+                "expected to be told which network, got " + text(attached, "state"));
+        assertTrue("webtest6".equals(text(attached, "nick")),
+                "expected the nick it is actually using, got " + text(attached, "nick"));
+
+        second.await(e -> "replay".equals(text(e, "type")) && "end".equals(text(e, "state")));
+    }
+
+    @Test
+    @DisplayName("what was said while nobody was watching is replayed")
+    void replaysWhatWasMissed() throws Exception {
+        Collector first = open();
+        send(connectCommand("webtest7", "#irc-web-backlog"));
+        first.await(e -> "status".equals(text(e, "type")) && "ready".equals(text(e, "state")));
+        first.await(e -> "names".equals(text(e, "type"))
+                && "#irc-web-backlog".equalsIgnoreCase(text(e, "channel")));
+
+        socket.close(CloseStatus.NORMAL);
+
+        WebSocketSession other = null;
+        try {
+            Collector otherEvents = new Collector();
+            other = connectAs(OTHER_USER, OTHER_PASSWORD, otherEvents);
+            other.sendMessage(new TextMessage(connectCommand("webtest8", "#irc-web-backlog")));
+            otherEvents.await(e -> "status".equals(text(e, "type"))
+                    && "ready".equals(text(e, "state")));
+
+            other.sendMessage(new TextMessage(JSON.writeValueAsString(java.util.Map.of(
+                    "type", "message",
+                    "target", "#irc-web-backlog",
+                    "text", "said while you were away"))));
+
+            // One connection is ordered, so a reply to something sent afterwards
+            // proves the server already dealt with the message. Without this the
+            // test would race the reattach and pass for the wrong reason.
+            other.sendMessage(new TextMessage(JSON.writeValueAsString(
+                    java.util.Map.of("type", "raw", "line", "TIME"))));
+            otherEvents.await(e -> "server".equals(text(e, "type"))
+                    && "391".equals(text(e, "state")));
+        } finally {
+            if (other != null && other.isOpen()) {
+                other.close(CloseStatus.NORMAL);
+            }
+        }
+
+        Collector back = new Collector();
+        socket = connect(back);
+
+        JsonNode missed = back.await(e -> "message".equals(text(e, "type"))
+                && "said while you were away".equals(text(e, "text")));
+        assertTrue("webtest8".equals(text(missed, "sender")),
+                "expected webtest8, got " + text(missed, "sender"));
+    }
+
+    @Test
+    @DisplayName("a second connection for the same account is refused, and says why")
+    void refusesASecondConnection() throws Exception {
+        Collector events = open();
+        send(connectCommand("webtest9", null));
+        events.await(e -> "status".equals(text(e, "type")) && "ready".equals(text(e, "state")));
+
+        send(connectCommand("webtest9b", null));
+
+        JsonNode error = events.await(e -> "error".equals(text(e, "type")));
+        assertTrue(text(error, "detail").contains("already connected"),
+                "expected to be told what is already running, got " + text(error, "detail"));
+    }
+
     // ------------------------------------------------------------------ helpers
 
     private Collector open() throws Exception {
@@ -161,9 +283,14 @@ class LocalIrcServerIT {
      * chain, and basic is far less to set up from a test.
      */
     private WebSocketSession connect(Collector collector) throws Exception {
+        return connectAs("tester", "test-password", collector);
+    }
+
+    private WebSocketSession connectAs(String user, String password, Collector collector)
+            throws Exception {
         WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
         headers.add(HttpHeaders.AUTHORIZATION, "Basic " + java.util.Base64.getEncoder()
-                .encodeToString("tester:test-password".getBytes()));
+                .encodeToString((user + ":" + password).getBytes()));
         return new StandardWebSocketClient()
                 .execute(collector, headers, java.net.URI.create(
                         "ws://localhost:" + port + "/ws/irc"))

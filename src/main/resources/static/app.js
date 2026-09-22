@@ -81,6 +81,8 @@ function readCookie(name) {
 }
 
 let socket = null;
+let reopenDelay = 0;            // grows while the socket cannot be reopened
+let pendingConnect = null;      // a connect pressed before the socket was ready
 let servers = [];
 let active = null;              // the channel currently being viewed
 let myNick = null;              // as the server gave it, not as it was asked for
@@ -269,26 +271,61 @@ async function changePassword() {
 
 // -------------------------------------------------------------------- socket
 
-function connect(event) {
-  event.preventDefault();
+/**
+ * The socket is opened on load, not on Connect.
+ *
+ * <p>The IRC connection belongs to the account and outlives this page, so the
+ * first thing to find out is whether one is already running. Opening the socket
+ * is how you ask.
+ */
+function openSocket() {
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/irc`;
   socket = new WebSocket(url);
 
   socket.addEventListener('open', () => {
-    send({
-      type: 'connect',
-      serverId: ui.server.value,
-      nick: ui.nick.value.trim(),
-      password: ui.password.value || null,
-      saslUsername: ui.saslUser.value || null,
-      saslPassword: ui.saslPass.value || null,
-      channels: splitChannels(ui.channels.value),
-    });
+    reopenDelay = 0;
+    if (pendingConnect) {
+      send(pendingConnect);
+      pendingConnect = null;
+    }
   });
 
   socket.addEventListener('message', (frame) => handle(JSON.parse(frame.data)));
-  socket.addEventListener('close', () => setState('disconnected', 'socket closed'));
-  socket.addEventListener('error', () => setState('disconnected', 'socket error'));
+  socket.addEventListener('close', () => {
+    // Losing the socket says nothing about the IRC connection, which is still
+    // sitting in its channels. Get the socket back and it replays what was
+    // said in the meantime.
+    setState('disconnected', 'lost the page connection, retrying');
+    scheduleReopen();
+  });
+  socket.addEventListener('error', () => { /* close follows, and handles it */ });
+}
+
+function scheduleReopen() {
+  reopenDelay = reopenDelay ? Math.min(reopenDelay * 2, 15000) : 1000;
+  setTimeout(openSocket, reopenDelay);
+}
+
+function connect(event) {
+  event.preventDefault();
+  const command = {
+    type: 'connect',
+    serverId: ui.server.value,
+    nick: ui.nick.value.trim(),
+    password: ui.password.value || null,
+    saslUsername: ui.saslUser.value || null,
+    saslPassword: ui.saslPass.value || null,
+    channels: splitChannels(ui.channels.value),
+  };
+
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    send(command);
+    return;
+  }
+  // Sent as soon as the socket is there, so pressing Connect during a blip
+  // does not quietly do nothing.
+  pendingConnect = command;
+  openSocket();
 }
 
 function send(command) {
@@ -298,8 +335,10 @@ function send(command) {
 }
 
 function disconnect() {
+  // Only this leaves the network now. The socket stays, so the next connection
+  // does not have to wait for one to be opened.
   send({ type: 'disconnect' });
-  if (socket) { socket.close(); }
+  resetBuffers();
 }
 
 // ------------------------------------------------------------------ handling
@@ -356,6 +395,19 @@ function handle(event) {
       renderTabs(event.channels || []);
       break;
 
+    case 'replay':
+      // Bracketing a replay lets the browser start from nothing. Without it a
+      // socket that dropped and came back would show every message twice.
+      if (event.state === 'start') { resetBuffers(); }
+      break;
+
+    case 'attached':
+      // A session was already running. Show which network it is on, and under
+      // what nick, so the form matches what is actually connected.
+      if (event.nick) { myNick = event.nick; ui.nick.value = event.nick; }
+      if (event.state) { loadServers(event.state); }
+      break;
+
     case 'names':
       memberLists.set(event.channel, event.members || []);
       if (event.topic) { topics.set(event.channel, event.topic); }
@@ -394,6 +446,19 @@ function openQuery(nick) {
     queries.add(nick);
     if (!ui.tabs.querySelector(`[data-target="${cssEscape(nick)}"]`)) { addTab(nick); }
   }
+}
+
+/** Back to an empty window, ready to be filled by a replay. */
+function resetBuffers() {
+  buffers.clear();
+  unread.clear();
+  memberLists.clear();
+  topics.clear();
+  queries.clear();
+  listing = null;
+  active = null;
+  renderTabs([]);
+  select(STATUS_BUFFER);
 }
 
 function setState(state, detail) {
@@ -1062,3 +1127,4 @@ select(STATUS_BUFFER);
 
 loadMe();
 loadServers();
+openSocket();

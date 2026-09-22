@@ -88,6 +88,31 @@ public record OutboundEvent(
                 null, null, null, null, null, null, null);
     }
 
+    /**
+     * Brackets a replay so the browser can empty what it already has.
+     *
+     * <p>Without it, reattaching after a dropped socket would append a second copy
+     * of every message still in the backlog.
+     *
+     * @param state {@code start} or {@code end}
+     */
+    public static OutboundEvent replay(String state) {
+        return new OutboundEvent("replay", state, null, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
+    }
+
+    /**
+     * Which network a browser has just been attached to, so the connect form can
+     * show the session that was already running rather than an empty one.
+     *
+     * @param serverId carried in {@code state}, which is where the browser already
+     *                 looks for what a status line is about
+     */
+    public static OutboundEvent attached(String serverId, String nick) {
+        return new OutboundEvent("attached", serverId, null, null, null, null, null, null, null,
+                nick, null, null, null, null, null, null);
+    }
+
     public static OutboundEvent error(String detail) {
         return new OutboundEvent("error", null, detail, null, null, null, null, null, null,
                 null, null, null, null, null, null, null);
