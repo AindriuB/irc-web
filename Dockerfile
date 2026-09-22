@@ -18,7 +18,7 @@ RUN mvn -B -q package -DskipTests
 FROM eclipse-temurin:21-jre-alpine AS runtime
 
 # Not root. The app opens outbound sockets and serves HTTP; neither needs it,
-# and a test harness with no authentication is the last thing to run privileged.
+# and something reachable from a browser is the last thing to run privileged.
 RUN addgroup -S app && adduser -S -G app app
 WORKDIR /app
 

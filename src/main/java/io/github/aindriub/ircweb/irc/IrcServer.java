@@ -12,7 +12,7 @@ import java.util.List;
  * @param tls        whether the port expects TLS
  * @param sasl       whether the network supports SASL PLAIN
  * @param registered whether a registered account is needed to be useful
- * @param exercises  which parts of the library this target is good for proving
+ * @param features  which parts of the library this target is good for proving
  * @param notes      anything that would otherwise be rediscovered the hard way
  */
 public record IrcServer(
@@ -23,7 +23,7 @@ public record IrcServer(
         boolean tls,
         boolean sasl,
         boolean registered,
-        List<String> exercises,
+        List<String> features,
         String notes) {
 
     /**

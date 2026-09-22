@@ -1,4 +1,4 @@
-# A local IRC server, so the test project does not depend on somebody else's.
+# A local IRC server, so a fresh install has somewhere to connect to.
 #
 # ergo is a single Go binary with no database and no services package to run
 # separately - it does nick registration, channel registration and SASL itself.
@@ -8,7 +8,7 @@
 #
 #   docker compose -f docker/compose.yaml up -d
 #   docker compose -f docker/compose.yaml logs -f ergo
-#   docker compose -f docker/compose.yaml restart ergo     # exercises reconnect
+#   docker compose -f docker/compose.yaml restart ergo     # to watch it reconnect
 #
 # 6667 plaintext, 6697 TLS with a self-signed certificate the container makes
 # on first start. Bound to 127.0.0.1 so this is not accidentally a public IRC

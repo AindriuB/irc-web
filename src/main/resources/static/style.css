@@ -178,8 +178,6 @@ details summary { font-size: 11px; text-transform: uppercase; letter-spacing: 0.
 header form { margin: 0; }
 button.small { width: auto; padding: 4px 10px; font-size: 11px; }
 button.wide { width: 100%; margin-top: 10px; }
-.nag { font-size: 11px; color: #1b1408; background: var(--warn);
-       padding: 2px 8px; border-radius: 10px; font-weight: 600; }
 
 .server-actions { display: flex; gap: 6px; margin: 6px 0 10px; }
 .server-actions button { flex: 1; }

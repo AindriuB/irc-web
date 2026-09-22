@@ -14,7 +14,7 @@
 	<artifactId>irc-web</artifactId>
 	<version>0.1.0-SNAPSHOT</version>
 	<name>irc-web</name>
-	<description>A web front end for irc-client, and the exercise that proves the library works</description>
+	<description>An IRC client for the browser, hosted on your own server</description>
 	<url>https://github.com/AindriuB/irc-web</url>
 
 	<licenses>
@@ -46,7 +46,7 @@
 	</properties>
 
 	<dependencies>
-		<!-- The subject of the exercise. Everything else here exists to drive it. -->
+		<!-- The IRC protocol implementation. This application is the client around it. -->
 		<dependency>
 			<groupId>io.github.aindriub</groupId>
 			<artifactId>irc-client</artifactId>
@@ -79,7 +79,7 @@
 			<scope>test</scope>
 		</dependency>
 		<!-- H2 in file mode: the directory and its credentials have to survive a
-		     restart, but a test harness should not need a database server stood
+		     restart, but a single-user application should not need a database server stood
 		     up beside it before it will run. -->
 		<dependency>
 			<groupId>com.h2database</groupId>

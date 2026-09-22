@@ -9,7 +9,7 @@
 <body>
 <main>
   <h1>irc-web</h1>
-  <p class="sub">A web front end that exercises irc-client</p>
+  <p class="sub">IRC in your browser, on your own server</p>
 
   <form method="post" action="/api/login">
     <label>Username
@@ -18,18 +18,25 @@
     <label>Password
       <input name="password" type="password" autocomplete="current-password" required>
     </label>
+    <!-- Filled in below from the cookie. A form post carries no token otherwise
+         and is refused, which looks exactly like a wrong password. -->
+    <input type="hidden" id="csrf" name="_csrf">
     <button type="submit">Sign in</button>
   </form>
 
   <p id="message" class="message"></p>
 
   <p class="note">
-    On first start a password is generated and printed to the application log.
-    <code>docker compose logs irc-web</code>
+    This is the account you chose when you set this install up. Forgotten it?
+    See <code>Resetting the password</code> in the README.
   </p>
 </main>
 
 <script>
+  const csrf = document.cookie.split('; ')
+    .find((c) => c.startsWith('XSRF-TOKEN='))?.split('=')[1];
+  if (csrf) { document.getElementById('csrf').value = csrf; }
+
   // Spring redirects here with a marker rather than a body, so the message is
   // assembled on this side.
   const params = new URLSearchParams(location.search);
@@ -39,6 +46,9 @@
     message.className = 'message bad';
   } else if (params.has('out')) {
     message.textContent = 'Signed out.';
+    message.className = 'message good';
+  } else if (params.has('created')) {
+    message.textContent = 'Account created. Sign in with it.';
     message.className = 'message good';
   }
 </script>

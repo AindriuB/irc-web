@@ -25,28 +25,18 @@ public class AppUserEntity {
 
     private Instant createdAt;
 
-    /**
-     * Set when the password was generated for us rather than chosen. Drives the
-     * nag in the UI, because a printed-once password that is never changed is the
-     * usual way these end up effectively unauthenticated.
-     */
-    private boolean generatedPassword;
-
     protected AppUserEntity() {
     }
 
-    public AppUserEntity(String username, String passwordHash, boolean generatedPassword) {
+    public AppUserEntity(String username, String passwordHash) {
         this.username = username;
         this.passwordHash = passwordHash;
-        this.generatedPassword = generatedPassword;
         this.createdAt = Instant.now();
     }
 
     public String getUsername() { return username; }
     public String getPasswordHash() { return passwordHash; }
     public Instant getCreatedAt() { return createdAt; }
-    public boolean isGeneratedPassword() { return generatedPassword; }
 
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
-    public void setGeneratedPassword(boolean generated) { this.generatedPassword = generated; }
 }

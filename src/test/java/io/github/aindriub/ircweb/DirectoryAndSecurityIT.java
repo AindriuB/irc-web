@@ -20,6 +20,8 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
 
 import io.github.aindriub.ircweb.irc.DirectoryService;
 import io.github.aindriub.ircweb.irc.ProfileUpdate;
@@ -258,7 +260,66 @@ class DirectoryAndSecurityIT {
         ResponseEntity<Map> response = asUser().getForEntity("/api/me", Map.class);
 
         assertEquals("tester", response.getBody().get("username"));
-        assertNotNull(response.getBody().get("generatedPassword"));
+    }
+
+    @Test
+    @DisplayName("the sign-in form works the way the page actually submits it")
+    void formLoginSucceeds() {
+        // This went unnoticed once already: the form posted without a CSRF token
+        // and every sign-in came back 403, which on the page is indistinguishable
+        // from a wrong password. Driving the real form is the only way to see it.
+        ResponseEntity<String> page = rest.getForEntity("/login.html", String.class);
+        String setCookie = page.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
+        String token = setCookie.split(";")[0].split("=", 2)[1];
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+        headers.add(HttpHeaders.COOKIE, "XSRF-TOKEN=" + token);
+
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("username", "tester");
+        form.add("password", "test-password");
+        form.add("_csrf", token);
+
+        ResponseEntity<String> response = rest.exchange("/api/login", HttpMethod.POST,
+                new HttpEntity<>(form, headers), String.class);
+
+        // A POST redirect is not followed, which is convenient: success and
+        // failure are told apart by where it sends you, and a 403 is neither.
+        assertEquals(HttpStatus.FOUND, response.getStatusCode(),
+                "a refused token would be 403 here, which is what the page used to get");
+        assertTrue(response.getHeaders().getLocation().getPath().equals("/"),
+                "expected to be sent to the application, was sent to "
+                        + response.getHeaders().getLocation());
+    }
+
+    @Test
+    @DisplayName("setup is closed once an account exists")
+    void setupClosesBehindItself() {
+        // This instance was configured with an account, so it never needed setup.
+        ResponseEntity<Map> state = rest.getForEntity("/api/setup", Map.class);
+        assertEquals(Boolean.FALSE, state.getBody().get("required"));
+
+        HttpHeaders headers = csrf();
+        ResponseEntity<Map> attempt = rest.exchange("/api/setup", HttpMethod.POST,
+                new HttpEntity<>(Map.of("username", "intruder", "password", "password1"),
+                        headers),
+                Map.class);
+
+        assertEquals(HttpStatus.CONFLICT, attempt.getStatusCode(),
+                "the setup endpoint must not mint a second account on a running install");
+    }
+
+    @Test
+    @DisplayName("the setup page redirects away once there is an account")
+    void setupPageIsGoneOnceSetUp() {
+        // Following the redirect the way a browser would: the setup form is gone
+        // and what you get instead is somewhere to sign in.
+        ResponseEntity<String> response = rest.getForEntity("/setup.html", String.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+        assertFalse(response.getBody().contains("id=\"setup\""));
+        assertTrue(response.getBody().contains("action=\"/api/login\""));
     }
 
     @Test

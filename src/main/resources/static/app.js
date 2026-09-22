@@ -26,7 +26,6 @@ const ui = {
   right: $('right'),
   menu: $('user-menu'),
   who: $('who'),
-  nag: $('password-nag'),
   saveProfile: $('save-profile'),
   profileState: $('profile-state'),
   serverDialog: $('server-dialog'),
@@ -103,7 +102,6 @@ const LABELS = { [STATUS_BUFFER]: 'status', [WIRE_BUFFER]: 'wire traffic' };
 async function loadMe() {
   const me = await api('/api/me');
   ui.who.textContent = me.username;
-  ui.nag.hidden = !me.generatedPassword;
 }
 
 async function loadServers(selectId) {
@@ -175,10 +173,10 @@ async function saveProfile() {
 function showNotes() {
   const server = servers.find((s) => s.id === ui.server.value);
   if (!server) { return; }
-  const exercises = (server.exercises || []).join(', ');
+  const features = (server.features || []).join(', ');
   ui.notes.textContent = server.notes.trim();
-  if (exercises) {
-    ui.notes.textContent += ` Exercises: ${exercises}.`;
+  if (features) {
+    ui.notes.textContent += ` Features: ${features}.`;
   }
   // Only offer SASL where it will work, rather than letting someone fill in
   // three fields that the network will ignore.
@@ -202,7 +200,7 @@ function openServerDialog(server) {
   $('f-tls').checked = server ? server.tls : true;
   $('f-sasl').checked = server ? server.sasl : false;
   $('f-registered').checked = server ? server.registered : false;
-  $('f-exercises').value = server ? (server.exercises || []).join(', ') : '';
+  $('f-features').value = server ? (server.features || []).join(', ') : '';
   $('f-notes').value = server ? (server.notes || '') : '';
   $('server-error').textContent = '';
   ui.serverDialog.showModal();
@@ -217,7 +215,7 @@ async function saveServer() {
     tls: $('f-tls').checked,
     sasl: $('f-sasl').checked,
     registered: $('f-registered').checked,
-    exercises: $('f-exercises').value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
+    features: $('f-features').value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
     notes: $('f-notes').value.trim() || null,
   };
   try {

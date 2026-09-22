@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>irc-web — first run</title>
+<link rel="stylesheet" href="login.css">
+</head>
+<body>
+<main>
+  <h1>irc-web</h1>
+  <p class="sub">Choose the account this install belongs to</p>
+
+  <form id="setup">
+    <label>Username
+      <input id="username" autocomplete="username" required autofocus
+             spellcheck="false" value="admin">
+    </label>
+    <label>Password
+      <input id="password" type="password" autocomplete="new-password" required>
+    </label>
+    <label>Repeat password
+      <input id="repeat" type="password" autocomplete="new-password" required>
+    </label>
+    <button type="submit">Create account</button>
+  </form>
+
+  <p id="message" class="message"></p>
+
+  <p class="note">
+    Nothing is reachable until this is done, and there is no password to change
+    afterwards because you are choosing it now.
+  </p>
+</main>
+
+<script>
+  const message = document.getElementById('message');
+  let minimum = 8;
+
+  function say(text, kind) {
+    message.textContent = text;
+    message.className = `message ${kind}`;
+  }
+
+  // Reading the state also makes the server set the CSRF cookie that the POST
+  // below echoes back, so this is not only for the message.
+  fetch('/api/setup')
+    .then((r) => r.json())
+    .then((state) => {
+      minimum = state.minimumPasswordLength;
+      if (!state.required) { location.href = '/login.html'; }
+    })
+    .catch(() => {});
+
+  function token() {
+    return document.cookie.split('; ')
+      .find((c) => c.startsWith('XSRF-TOKEN='))?.split('=')[1] ?? '';
+  }
+
+  document.getElementById('setup').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+
+    if (password !== document.getElementById('repeat').value) {
+      say('Those two passwords are not the same.', 'bad');
+      return;
+    }
+    if (password.length < minimum) {
+      say(`The password must be at least ${minimum} characters.`, 'bad');
+      return;
+    }
+
+    const response = await fetch('/api/setup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-XSRF-TOKEN': token() },
+      body: JSON.stringify({ username, password }),
+    });
+
+    if (response.ok) {
+      say('Account created. Sending you to sign in…', 'good');
+      location.href = '/login.html?created';
+      return;
+    }
+    const body = await response.json().catch(() => ({}));
+    say(body.error || 'That did not work.', 'bad');
+  });
+</script>
+</body>
+</html>

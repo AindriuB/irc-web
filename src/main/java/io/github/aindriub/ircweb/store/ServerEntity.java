@@ -49,16 +49,16 @@ public class ServerEntity {
     private boolean builtin;
 
     @ElementCollection(fetch = FetchType.EAGER)
-    @CollectionTable(name = "irc_server_exercises",
+    @CollectionTable(name = "irc_server_features",
             joinColumns = @JoinColumn(name = "server_id"))
-    @Column(name = "exercise")
-    private List<String> exercises = new ArrayList<>();
+    @Column(name = "feature")
+    private List<String> features = new ArrayList<>();
 
     protected ServerEntity() {
     }
 
     public ServerEntity(String id, String name, String host, int port, boolean tls,
-            boolean sasl, boolean registered, List<String> exercises, String notes,
+            boolean sasl, boolean registered, List<String> features, String notes,
             boolean builtin) {
         this.id = id;
         this.name = name;
@@ -67,7 +67,7 @@ public class ServerEntity {
         this.tls = tls;
         this.sasl = sasl;
         this.registered = registered;
-        this.exercises = exercises == null ? new ArrayList<>() : new ArrayList<>(exercises);
+        this.features = features == null ? new ArrayList<>() : new ArrayList<>(features);
         this.notes = notes;
         this.builtin = builtin;
     }
@@ -81,7 +81,7 @@ public class ServerEntity {
     public boolean isRegistered() { return registered; }
     public String getNotes() { return notes; }
     public boolean isBuiltin() { return builtin; }
-    public List<String> getExercises() { return exercises; }
+    public List<String> getFeatures() { return features; }
 
     public void setName(String name) { this.name = name; }
     public void setHost(String host) { this.host = host; }
@@ -90,7 +90,7 @@ public class ServerEntity {
     public void setSasl(boolean sasl) { this.sasl = sasl; }
     public void setRegistered(boolean registered) { this.registered = registered; }
     public void setNotes(String notes) { this.notes = notes; }
-    public void setExercises(List<String> exercises) {
-        this.exercises = exercises == null ? new ArrayList<>() : new ArrayList<>(exercises);
+    public void setFeatures(List<String> features) {
+        this.features = features == null ? new ArrayList<>() : new ArrayList<>(features);
     }
 }

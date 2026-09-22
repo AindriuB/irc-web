@@ -7,6 +7,7 @@ import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
@@ -24,7 +25,7 @@ import org.springframework.http.HttpStatus;
 public class SecurityConfig {
 
     @Bean
-    SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain filterChain(HttpSecurity http, AppUserService users) throws Exception {
         // The token goes in a cookie the browser's JavaScript can read and echo
         // back, which is what lets a fetch() from the same page carry it.
         CookieCsrfTokenRepository csrf = CookieCsrfTokenRepository.withHttpOnlyFalse();
@@ -32,10 +33,14 @@ public class SecurityConfig {
         csrfHandler.setCsrfRequestAttributeName(null);
 
         http
+            // Ahead of authentication on purpose: before setup there is nobody to
+            // authenticate as, so this has to be able to answer first.
+            .addFilterBefore(new SetupRequiredFilter(users), UsernamePasswordAuthenticationFilter.class)
             .authorizeHttpRequests(auth -> auth
                 // /health is public so a container probe works without credentials;
                 // it exposes a count and nothing else.
-                .requestMatchers("/login.html", "/login.css", "/api/login", "/health", "/error")
+                .requestMatchers("/login.html", "/login.css", "/api/login", "/health", "/error",
+                        "/setup.html", "/api/setup")
                     .permitAll()
                 .anyRequest().authenticated())
             .formLogin(form -> form

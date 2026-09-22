@@ -52,7 +52,7 @@ public class DirectoryService {
         for (IrcServer server : seed.getServers()) {
             servers.save(new ServerEntity(server.id(), server.name(), server.host(),
                     server.port(), server.tls(), server.sasl(), server.registered(),
-                    server.exercises(), server.notes(), true));
+                    server.features(), server.notes(), true));
         }
         LOGGER.info("Seeded the directory with {} servers from servers.yml",
                 seed.getServers().size());
@@ -75,7 +75,7 @@ public class DirectoryService {
         }
         ServerEntity entity = new ServerEntity(id, request.name(), request.host(),
                 request.port(), request.tls(), request.sasl(), request.registered(),
-                request.exercises(), request.notes(), false);
+                request.features(), request.notes(), false);
         return toRecord(servers.save(entity));
     }
 
@@ -89,7 +89,7 @@ public class DirectoryService {
         entity.setTls(request.tls());
         entity.setSasl(request.sasl());
         entity.setRegistered(request.registered());
-        entity.setExercises(request.exercises());
+        entity.setFeatures(request.features());
         entity.setNotes(request.notes());
         return toRecord(servers.save(entity));
     }
@@ -161,7 +161,7 @@ public class DirectoryService {
 
     private static IrcServer toRecord(ServerEntity e) {
         return new IrcServer(e.getId(), e.getName(), e.getHost(), e.getPort(), e.isTls(),
-                e.isSasl(), e.isRegistered(), List.copyOf(e.getExercises()), e.getNotes());
+                e.isSasl(), e.isRegistered(), List.copyOf(e.getFeatures()), e.getNotes());
     }
 
     private static ServerProfile toRecord(ProfileEntity e) {

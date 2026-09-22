@@ -2,13 +2,15 @@
 
 [![build](https://github.com/AindriuB/irc-web/actions/workflows/build.yml/badge.svg)](https://github.com/AindriuB/irc-web/actions/workflows/build.yml)
 
-A Spring Boot web front end for [irc-client](https://github.com/AindriuB/irc-client),
-and the exercise that proves the library works outside its own test suite.
+An IRC client you run on your own server and use from a browser.
 
-Its own tests are unit tests: they drive the library through an `EmbeddedChannel` or
-a stub server, in one process, one connection at a time. This puts it where a real
-application does — many concurrent connections, events arriving on Netty threads and
-being fanned out to browsers, and connections that come and go as people reload a tab.
+The connection lives in the server process, not in the tab. Close the browser and you
+stay on the network; open it again from another machine and the conversation is where
+you left it. It keeps your networks, nicks, channels and credentials in its own
+database, so the client is set up once rather than on every device.
+
+Built on [irc-client](https://github.com/AindriuB/irc-client), a Java IRC library
+from the same author.
 
 ## Running it
 
@@ -35,37 +37,41 @@ obvious cause.
 
 Published images are at `ghcr.io/aindriub/irc-web`.
 
-Pick a server, choose a nick, connect. `/join #chan`, `/part`, `/msg nick text` and
-`/raw <line>` all work; **wire traffic** in the top right shows every line the server
-sends, which is how you tell a parsing bug from an application bug.
+The first page you get is setup: choose a username and a password, and that account
+is the one everything else lives behind. Then pick a network, choose a nick, and
+connect. `/join #chan`, `/part`, `/msg nick text` and `/raw <line>` all work, and a
+**wire traffic** buffer shows every line the server sent, for when a network does
+something you would otherwise have to guess at.
 
 ## The server directory
 
-`src/main/resources/config/servers.yml` lists what to test against, and why each one
-is worth testing against. It is data rather than code so that adding a network is an
-edit to a list.
+Networks can be added, edited and removed in the UI, and are kept in the database.
+`src/main/resources/config/servers.yml` is only the set a **fresh install starts
+with** — it seeds an empty database and is then left alone, so an edit made in the UI
+is never silently undone by a restart.
 
-| | Exercises |
+The ones it ships with, and what each is like:
+
+| | |
 | --- | --- |
-| **local** / **local-tls** | registration, channels, modes, reconnect, TLS, SASL |
-| **Libera.Chat** | the best-behaved public network; SASL and ISUPPORT |
-| **OFTC** | a different ircd, so implementation-specific assumptions show up |
-| **IRCnet** | no services, no SASL — proves nothing depends on modern conveniences |
-| **EFnet** | no nick ownership, so collisions are ordinary; exercises nick retry |
-| **QuakeNet** | pings *during* registration; `PREFIX=(ov)@+`, `CASEMAPPING=rfc1459` |
-| **Rizon** | different `CHANMODES`/`PREFIX`, proving the mode parser reads ISUPPORT |
-| **Twitch** | IRCv3 tags, capabilities and real rate limits |
+| **local** / **local-tls** | the ergo server in the compose file; no account needed |
+| **Libera.Chat** | the large general network; most free software projects live here |
+| **OFTC** | Debian, Tor and similar; a different ircd |
+| **IRCnet** | no services and no SASL, so nicks are first come first served |
+| **EFnet** | no nick ownership either; expect to need a second choice of nick |
+| **QuakeNet** | pings *during* registration, which some clients trip over |
+| **Rizon** | anime and general chat; its own `CHANMODES`/`PREFIX` |
+| **Twitch** | chat as IRC, with tags, capabilities and real rate limits |
 
-Start with **local**. A test that needs the internet fails for reasons that have
-nothing to do with the code, and the local server is the only one that can be
-restarted mid-test — which makes it the only one that can exercise reconnection
-honestly:
+**local** is there so a fresh install has somewhere to go without an account or an
+internet connection. It is also the one to restart when you want to see what
+reconnection looks like:
 
 ```bash
 docker compose -f docker/compose.yaml restart ergo
 ```
 
-The browser should show the connection drop, reconnect with backoff, re-register and
+The browser shows the connection drop, then reconnect with backoff, re-register and
 rejoin its channels without being touched.
 
 ### Using someone else's server
@@ -118,16 +124,36 @@ container is not running — worth remembering that a skipped test has proved no
 
 ## Signing in
 
-On first start an account is created. Set `IRC_WEB_ADMIN_USERNAME` and
-`IRC_WEB_ADMIN_PASSWORD` to choose it; leave them unset and a password is generated
-and printed to the log **once**:
+There is no default password, and nothing is printed to the log. Until an account
+exists every page redirects to `/setup.html` and every API call is refused, so the
+first thing a fresh install can do is create one — and the only person who can is
+whoever reaches it first.
+
+That is deliberate. A shipped default nobody changes and a generated password buried
+in a log that later rotates away are the two usual ways something like this ends up
+effectively unauthenticated; neither is possible if the password is chosen by a human
+before anything works.
+
+For an unattended install, set `IRC_WEB_ADMIN_USERNAME` and `IRC_WEB_ADMIN_PASSWORD`
+**before the first start**. The account is created from them and setup never appears.
+Set afterwards they do nothing — an account already exists, and letting an
+environment variable overwrite a password would undo the point of asking for one.
+
+### Resetting the password
+
+Forgotten it? Delete the account row and restart with the password you want. The
+networks, profiles and stored credentials are in other tables and are untouched:
 
 ```bash
-docker compose -f docker/compose.yaml logs irc-web | grep -A4 'has been generated'
+docker compose -f docker/compose.yaml stop irc-web
+# with the app stopped, so H2 is not locked:
+java -cp h2.jar org.h2.tools.Shell -url jdbc:h2:/path/to/data/irc-web \
+     -user sa -sql "DELETE FROM app_user"
+IRC_WEB_ADMIN_PASSWORD=the-new-one docker compose -f docker/compose.yaml up -d irc-web
 ```
 
-The header nags until a generated password is changed, because one that was printed
-once and never changed is how these end up effectively unauthenticated.
+Leave `IRC_WEB_ADMIN_PASSWORD` unset instead and the next browser gets the setup page
+again, which is the same thing without editing the database by hand.
 
 ## What is stored, and how
 
@@ -155,9 +181,10 @@ password field leaves what is stored alone; an empty one clears it.
 
 Apache License 2.0. See [LICENSE](LICENSE).
 
-Still worth saying plainly: this is a test harness. Anyone who signs in can connect
-to any network in the directory and send raw IRC commands from your address. Keep it
-on a network you trust.
+Worth saying plainly: anyone who signs in can connect to any network in the directory
+and send raw IRC commands from your address, using credentials this application holds
+on your behalf. It is built for one person or a small trusted group, and it should sit
+behind your own network or a reverse proxy with TLS rather than on the open internet.
 
 ## Depending on irc-client
 

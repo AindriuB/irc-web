@@ -4,11 +4,11 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * A web front end for irc-client.
+ * An IRC client that runs on a server and is used from a browser.
  *
- * <p>It exists to exercise the library against real servers in the way a real
- * application would: many concurrent connections, events arriving on Netty threads
- * and being fanned out to browsers, and connections that come and go.
+ * <p>One process holds the connections; browsers attach to them over a websocket
+ * and detach again. That is what lets a tab be closed without dropping off the
+ * network, and it is why this is a server rather than a page.
  */
 @SpringBootApplication
 public class IrcWebApplication {

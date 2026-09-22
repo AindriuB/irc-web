@@ -80,10 +80,10 @@ public class IrcSession {
                     // validating it would fail by design. Never relaxed for a public
                     // network, where an unvalidated certificate is the whole problem.
                     .trustAllCertificates(server.tls() && server.isLocal())
-                    .realname("irc-web exercising irc-client")
-                    // Raw lines go to the browser too. For a test harness the wire
-                    // traffic is half the point: it is how you tell a parsing bug
-                    // from an application bug.
+                    .realname("irc-web")
+                    // Raw lines go to the browser too, as their own buffer. It is
+                    // how you tell "the server refused this" from "this client did
+                    // not send it", without reaching for the server's logs.
                     .eventListener(new RawForwarder());
 
             if (hasText(request.saslPassword())) {

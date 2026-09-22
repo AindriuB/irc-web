@@ -28,6 +28,6 @@ public record ServerUpsert(
         boolean tls,
         boolean sasl,
         boolean registered,
-        List<String> exercises,
+        List<String> features,
         String notes) {
 }

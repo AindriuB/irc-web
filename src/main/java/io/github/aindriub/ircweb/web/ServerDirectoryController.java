@@ -42,11 +42,7 @@ public class ServerDirectoryController {
 
     @GetMapping("/me")
     public Map<String, Object> me(Principal principal) {
-        return Map.of(
-                "username", principal.getName(),
-                // Drives the nag in the UI. A password that was printed once and
-                // never changed is the usual way these end up unauthenticated.
-                "generatedPassword", users.hasGeneratedPassword(principal.getName()));
+        return Map.of("username", principal.getName());
     }
 
     @PostMapping("/me/password")
