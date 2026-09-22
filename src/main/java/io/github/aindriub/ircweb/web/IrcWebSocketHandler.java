@@ -14,7 +14,8 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 
 import io.github.aindriub.ircweb.irc.ClientCommand;
 import io.github.aindriub.ircweb.irc.ConnectRequest;
@@ -82,7 +83,9 @@ public class IrcWebSocketHandler extends TextWebSocketHandler {
         ClientCommand command;
         try {
             command = json.readValue(message.getPayload(), ClientCommand.class);
-        } catch (IOException e) {
+        } catch (JacksonException e) {
+            // Jackson 3 made these unchecked. Still caught: a browser sending
+            // something unparseable should be told so, not silently ignored.
             bridge.send(OutboundEvent.error("could not parse that: " + e.getMessage()));
             return;
         }

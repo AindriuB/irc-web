@@ -11,9 +11,11 @@ import java.util.Map;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -40,14 +42,21 @@ import io.github.aindriub.ircweb.irc.ServerUpsert;
         })
 class DirectoryAndSecurityIT {
 
-    @Autowired
-    private TestRestTemplate rest;
+    @LocalServerPort
+    private int port;
+
+    private RestTemplate rest;
+
+    @BeforeEach
+    void client() {
+        rest = TestHttp.anonymous(port);
+    }
 
     @Autowired
     private DirectoryService directory;
 
-    private TestRestTemplate asUser() {
-        return rest.withBasicAuth("tester", "test-password");
+    private RestTemplate asUser() {
+        return TestHttp.as(port, "tester", "test-password");
     }
 
     /**
