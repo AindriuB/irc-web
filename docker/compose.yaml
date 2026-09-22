@@ -12,7 +12,7 @@
 #
 # 6667 plaintext, 6697 TLS with a self-signed certificate the container makes
 # on first start. Bound to 127.0.0.1 so this is not accidentally a public IRC
-# server on the homelab's network.
+# server on the surrounding network.
 
 services:
   irc-web:
@@ -30,10 +30,12 @@ services:
       # name. Loopback here would be this container, which runs no IRC server.
       LOCAL_IRC_HOST: ergo
       IRC_WEB_DATA_DIR: /data
-      # Set these to choose the first account rather than having one generated
-      # and printed to the log. The key encrypts the stored IRC passwords;
-      # without it one is generated into /data, which is fine until the volume
-      # is copied somewhere the key is not.
+      # Leave the password empty and the first browser to arrive is asked to
+      # choose an account. Set it before the first start instead to create that
+      # account up front, for an install nobody is going to be sitting at.
+      # The key encrypts the stored IRC passwords; without it one is generated
+      # into /data, which is fine until the volume is copied somewhere the key
+      # is not.
       IRC_WEB_ADMIN_USERNAME: ${IRC_WEB_ADMIN_USERNAME:-admin}
       IRC_WEB_ADMIN_PASSWORD: ${IRC_WEB_ADMIN_PASSWORD:-}
       IRC_WEB_SECRET_KEY: ${IRC_WEB_SECRET_KEY:-}
@@ -43,8 +45,9 @@ services:
       - irc-web-data:/data
     ports:
       # Bound to all interfaces deliberately: the point of running it this way
-      # is to reach it from another machine. It has no authentication, so keep
-      # it to a network you trust.
+      # is to reach it from another machine. Signing in is required, but the
+      # traffic is plain HTTP, so put it behind a reverse proxy with TLS before
+      # it is reachable from anywhere you do not control.
       - "8081:8081"
 
   ergo:
