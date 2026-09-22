@@ -50,6 +50,19 @@ jobs:
           echo "::error::no IRC server on 127.0.0.1:6667; the tests would have skipped"
           exit 1
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: src/test/js/package-lock.json
+
+      - name: Test the front end
+        # The command menu is logic, and it lives in a file no Java test loads.
+        working-directory: src/test/js
+        run: |
+          npm ci
+          npm test
+
       - name: Build and test
         run: mvn -B --no-transfer-progress verify
 

@@ -20,6 +20,7 @@ const ui = {
   log: $('log'),
   topic: $('topic'),
   input: $('input'),
+  completions: $('completions'),
   sayButton: document.querySelector('#say button'),
   members: $('members'),
   memberCount: $('member-count'),
@@ -510,7 +511,7 @@ function select(target) {
   ui.log.classList.toggle('wire', target === WIRE_BUFFER);
   ui.input.placeholder = target === WIRE_BUFFER
     ? 'raw IRC line, sent exactly as typed - e.g. LIST or WHOIS someone'
-    : 'message, or /join #chan, /part, /raw LIST';
+    : 'message, or / for commands';
   renderLog();
   renderMembers();
   renderTopic();
@@ -626,40 +627,91 @@ function renderTopic() {
 
 // -------------------------------------------------------------------- input
 
+/**
+ * Every command the input understands, declared once.
+ *
+ * The dispatcher below and the completion menu both read this, so a command
+ * cannot exist without being offered, and cannot be offered without working.
+ * Keeping them apart is how a client ends up suggesting something it does not
+ * implement.
+ */
+const COMMANDS = [
+  {
+    name: 'join',
+    args: '#channel',
+    help: 'join a channel',
+    run: ({ argument }) => send({ type: 'join', channel: argument }),
+  },
+  {
+    name: 'part',
+    args: '[#channel]',
+    help: 'leave a channel, or this one',
+    run: ({ argument }) => send({ type: 'part', channel: argument || active }),
+  },
+  {
+    name: 'msg',
+    args: '<nick> <text>',
+    help: 'send someone a private message',
+    run: ({ rest }) => {
+      const [target, ...words] = rest;
+      const text = words.join(' ');
+      if (!target || !text) {
+        append(STATUS_BUFFER, 'error', null, 'usage: /msg <nick> <text>');
+        return;
+      }
+      if (!isChannelName(target)) { openQuery(target); select(target); }
+      send({ type: 'message', target, text });
+      append(target, 'self', myNick, text);
+    },
+  },
+  {
+    name: 'query',
+    args: '<nick>',
+    help: 'open a conversation without sending anything yet',
+    run: ({ rest }) => {
+      if (!rest[0]) {
+        append(STATUS_BUFFER, 'error', null, 'usage: /query <nick>');
+        return;
+      }
+      openQuery(rest[0]);
+      select(rest[0]);
+    },
+  },
+  {
+    name: 'whois',
+    args: '[nick]',
+    help: 'look someone up',
+    run: ({ argument }) => {
+      send({ type: 'raw', line: `WHOIS ${argument || active}` });
+      select(STATUS_BUFFER);
+    },
+  },
+  {
+    name: 'raw',
+    args: '<line>',
+    help: 'send a line to the server exactly as typed',
+    run: ({ argument }) => send({ type: 'raw', line: argument }),
+  },
+];
+
+const COMMANDS_BY_NAME = new Map(COMMANDS.map((c) => [c.name, c]));
+
 function say(event) {
   event.preventDefault();
+  hideCompletions();
   const text = ui.input.value.trim();
   if (!text) { return; }
   ui.input.value = '';
 
   if (text.startsWith('/')) {
-    const [command, ...rest] = text.slice(1).split(/\s+/);
-    const argument = rest.join(' ');
-    switch (command.toLowerCase()) {
-      case 'join': send({ type: 'join', channel: argument }); return;
-      case 'part': send({ type: 'part', channel: argument || active }); return;
-      case 'raw': send({ type: 'raw', line: argument }); return;
-      case 'msg': {
-        const [target, ...words] = rest;
-        if (!isChannelName(target)) { openQuery(target); select(target); }
-        send({ type: 'message', target, text: words.join(' ') });
-        append(target, 'self', myNick, words.join(' '));
-        return;
-      }
-      case 'query': {
-        openQuery(rest[0]);
-        select(rest[0]);
-        return;
-      }
-      case 'whois': {
-        send({ type: 'raw', line: `WHOIS ${argument || active}` });
-        select(STATUS_BUFFER);
-        return;
-      }
-      default:
-        append(STATUS_BUFFER, 'error', null, `unknown command /${command}`);
-        return;
+    const [word, ...rest] = text.slice(1).split(/\s+/);
+    const command = COMMANDS_BY_NAME.get(word.toLowerCase());
+    if (!command) {
+      append(STATUS_BUFFER, 'error', null, `unknown command /${word}`);
+      return;
     }
+    command.run({ argument: rest.join(' '), rest });
+    return;
   }
 
   if (active === WIRE_BUFFER) {
@@ -673,6 +725,111 @@ function say(event) {
   send({ type: 'message', target: active, text });
 }
 
+// -------------------------------------------------------------- completions
+
+let completions = [];
+let highlighted = 0;
+
+/**
+ * The command word being typed, or null when the caret is somewhere a command
+ * name cannot be. Past the first space the argument is being written, and
+ * offering command names there would be noise.
+ */
+function commandWord() {
+  const value = ui.input.value;
+  if (!value.startsWith('/')) { return null; }
+
+  const space = value.indexOf(' ');
+  const caret = ui.input.selectionStart ?? value.length;
+  if (space !== -1 && caret > space) { return null; }
+
+  return (space === -1 ? value : value.slice(0, space)).slice(1).toLowerCase();
+}
+
+function refreshCompletions() {
+  const word = commandWord();
+  if (word === null) { hideCompletions(); return; }
+
+  completions = COMMANDS.filter((c) => c.name.startsWith(word));
+  // An exact and only match has nothing left to suggest: the menu would just
+  // sit there restating what has already been typed.
+  if (!completions.length || (completions.length === 1 && completions[0].name === word)) {
+    hideCompletions();
+    return;
+  }
+
+  highlighted = 0;
+  renderCompletions();
+}
+
+function renderCompletions() {
+  ui.completions.innerHTML = '';
+  completions.forEach((command, index) => {
+    const item = document.createElement('li');
+    item.className = 'completion' + (index === highlighted ? ' on' : '');
+    item.innerHTML =
+      `<span class="c-name">/${command.name}</span>` +
+      `<span class="c-args"></span><span class="c-help"></span>`;
+    item.querySelector('.c-args').textContent = command.args;
+    item.querySelector('.c-help').textContent = command.help;
+    // mousedown, not click: the input blurs first on click and the menu would
+    // already be gone by the time the handler ran.
+    item.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      accept(command);
+    });
+    ui.completions.append(item);
+  });
+  ui.completions.hidden = false;
+}
+
+function hideCompletions() {
+  completions = [];
+  ui.completions.hidden = true;
+  ui.completions.innerHTML = '';
+}
+
+function move(by) {
+  highlighted = (highlighted + by + completions.length) % completions.length;
+  renderCompletions();
+}
+
+/** Replaces the command word, keeps whatever was already typed after it. */
+function accept(command) {
+  const value = ui.input.value;
+  const space = value.indexOf(' ');
+  const remainder = space === -1 ? '' : value.slice(space + 1);
+
+  ui.input.value = `/${command.name} ${remainder}`;
+  const caret = command.name.length + 2;
+  ui.input.setSelectionRange(caret, caret);
+  ui.input.focus();
+  hideCompletions();
+}
+
+function onInputKey(event) {
+  if (ui.completions.hidden) { return; }
+
+  switch (event.key) {
+    case 'ArrowDown': event.preventDefault(); move(1); return;
+    case 'ArrowUp': event.preventDefault(); move(-1); return;
+    case 'Escape': event.preventDefault(); hideCompletions(); return;
+    case 'Tab':
+      event.preventDefault();
+      accept(completions[highlighted]);
+      return;
+    case 'Enter':
+      // Only when what is typed is not already a command in its own right, so
+      // Enter on something complete still sends rather than surprising anyone.
+      if (!COMMANDS_BY_NAME.has(commandWord())) {
+        event.preventDefault();
+        accept(completions[highlighted]);
+      }
+      return;
+    default:
+  }
+}
+
 function splitChannels(value) {
   return value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
 }
@@ -683,6 +840,12 @@ function cssEscape(value) {
 }
 
 // --------------------------------------------------------------------- wiring
+
+ui.input.addEventListener('input', refreshCompletions);
+ui.input.addEventListener('keydown', onInputKey);
+// Arrow keys and clicks move the caret without firing input.
+ui.input.addEventListener('click', refreshCompletions);
+ui.input.addEventListener('blur', hideCompletions);
 
 $('connect').addEventListener('submit', connect);
 ui.stop.addEventListener('click', disconnect);

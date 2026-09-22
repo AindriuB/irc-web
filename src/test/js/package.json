@@ -1,0 +1,12 @@
+{
+  "name": "irc-web-ui-tests",
+  "private": true,
+  "type": "module",
+  "description": "Front end tests. Run with: npm ci && npm test",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1"
+  }
+}

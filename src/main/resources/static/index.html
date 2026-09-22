@@ -74,7 +74,10 @@
     <div id="topic" class="topic"></div>
     <ol id="log"></ol>
     <form id="say">
-      <input id="input" placeholder="message, or /join #chan, /part, /raw LIST"
+      <!-- Sits above the input rather than below it: the input is at the bottom
+           of the window, where a menu underneath would be off screen. -->
+      <ul id="completions" class="completions" hidden></ul>
+      <input id="input" placeholder="message, or / for commands"
              autocomplete="off" disabled>
       <button type="submit" disabled>Send</button>
     </form>

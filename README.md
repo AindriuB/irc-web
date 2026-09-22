@@ -39,9 +39,11 @@ Published images are at `ghcr.io/aindriub/irc-web`.
 
 The first page you get is setup: choose a username and a password, and that account
 is the one everything else lives behind. Then pick a network, choose a nick, and
-connect. `/join #chan`, `/part`, `/msg nick text` and `/raw <line>` all work, and a
-**wire traffic** buffer shows every line the server sent, for when a network does
-something you would otherwise have to guess at.
+connect. Typing `/` in the message box lists the commands with their arguments —
+**Tab** or **Enter** completes one, the arrows move through them, **Esc** dismisses
+them. A command typed in full and sent with Enter goes as it always did. A **wire
+traffic** buffer shows every line the server sent, for when a network does something
+you would otherwise have to guess at.
 
 ## The server directory
 
@@ -109,6 +111,7 @@ step, just three files in `static/`.
 
 ```bash
 mvn verify                                     # needs the local server running
+cd src/test/js && npm ci && npm test           # the front end
 ```
 
 Note `verify`, not `test`. The tests are named `*IT`, which surefire does not pick
@@ -116,6 +119,11 @@ up — `mvn test` ran nothing at all until failsafe was wired in, and reported s
 while doing it. CI asserts both that the IRC server is reachable *and* that a non-zero
 number of integration tests ran, because a suite that silently runs nothing is worse
 than no suite.
+
+The front end tests run `app.js` in jsdom and drive the input the way a person does,
+because the command menu is logic and no Java test loads that file. They also assert
+that every command offered is one the dispatcher implements — both read the same
+table, so it is really asserting that they still do.
 
 `LocalIrcServerIT` drives the whole stack against ergo: registration, joining and
 member lists, a message travelling between two browser sessions through the IRC
