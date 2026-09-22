@@ -53,6 +53,10 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
+          # A pushed image is pulled back by the probe below; an unpushed one
+          # only exists in the buildx cache, so a pull request has to load it
+          # into the daemon or there is nothing to docker run.
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
