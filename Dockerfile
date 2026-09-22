@@ -15,7 +15,7 @@ COPY src ./src
 # docker build that quietly skips them without saying why is worse.
 RUN mvn -B -q package -DskipTests
 
-FROM eclipse-temurin:21-jre-alpine AS runtime
+FROM eclipse-temurin:25-jre-alpine AS runtime
 
 # Not root. The app opens outbound sockets and serves HTTP; neither needs it,
 # and something reachable from a browser is the last thing to run privileged.
