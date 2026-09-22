@@ -4,10 +4,14 @@
 
 An IRC client you run on your own server and use from a browser.
 
-The connection lives in the server process, not in the tab. Close the browser and you
-stay on the network; open it again from another machine and the conversation is where
-you left it. It keeps your networks, nicks, channels and credentials in its own
-database, so the client is set up once rather than on every device.
+It keeps your networks, nicks, channels and credentials in its own database, so the
+client is set up once rather than on every device, and any browser on your network is
+a full client with nothing installed.
+
+**The connection currently lasts as long as the browser tab.** Closing it disconnects
+you, because leaving the session running would otherwise strand a copy of you in every
+channel under the same nick on reload. Staying connected while the browser is away is
+a bouncer, and is tracked as work rather than claimed as working.
 
 Built on [irc-client](https://github.com/AindriuB/irc-client), a Java IRC library
 from the same author.
