@@ -92,6 +92,15 @@
 			<artifactId>spring-boot-starter-test</artifactId>
 			<scope>test</scope>
 		</dependency>
+		<!-- Spring Boot 4 moved TestRestTemplate out of the test starter and into
+		     its own module. The tests drive the application over real HTTP on a
+		     real port, which is the point of them, so it is added back rather
+		     than the tests rewritten around a mock. -->
+		<dependency>
+			<groupId>org.springframework.boot</groupId>
+			<artifactId>spring-boot-restclient-test</artifactId>
+			<scope>test</scope>
+		</dependency>
 	</dependencies>
 
 	<build>

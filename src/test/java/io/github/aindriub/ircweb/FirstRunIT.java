@@ -12,9 +12,10 @@ import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.junit.jupiter.api.BeforeEach;
+import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -45,8 +46,15 @@ class FirstRunIT {
     private static final String USERNAME = "operator";
     private static final String PASSWORD = "a-chosen-password";
 
-    @Autowired
-    private TestRestTemplate rest;
+    @LocalServerPort
+    private int port;
+
+    private RestTemplate rest;
+
+    @BeforeEach
+    void client() {
+        rest = TestHttp.anonymous(port);
+    }
 
     private HttpHeaders csrf() {
         ResponseEntity<String> primer = rest.getForEntity("/api/setup", String.class);
@@ -120,7 +128,7 @@ class FirstRunIT {
         assertEquals(HttpStatus.NO_CONTENT, created.getStatusCode());
 
         // The account works.
-        ResponseEntity<Map> me = rest.withBasicAuth(USERNAME, PASSWORD)
+        ResponseEntity<Map> me = TestHttp.as(port, USERNAME, PASSWORD)
                 .getForEntity("/api/me", Map.class);
         assertEquals(USERNAME, me.getBody().get("username"));
 

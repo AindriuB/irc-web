@@ -32,8 +32,8 @@ import io.github.aindriub.ircweb.irc.IrcSessionRegistry;
 import io.github.aindriub.ircweb.store.AppUserEntity;
 import io.github.aindriub.ircweb.store.AppUserRepository;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /**
  * Drives the whole stack against the local IRC server: browser socket, Spring
