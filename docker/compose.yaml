@@ -1,0 +1,36 @@
+# A local IRC server, so the test project does not depend on somebody else's.
+#
+# ergo is a single Go binary with no database and no services package to run
+# separately - it does nick registration, channel registration and SASL itself.
+# That matters here: testing the SASL path against a public network needs an
+# account somebody has to create and keep, whereas this one is created and
+# thrown away with the container.
+#
+#   docker compose -f docker/compose.yaml up -d
+#   docker compose -f docker/compose.yaml logs -f ergo
+#   docker compose -f docker/compose.yaml restart ergo     # exercises reconnect
+#
+# 6667 plaintext, 6697 TLS with a self-signed certificate the container makes
+# on first start. Bound to 127.0.0.1 so this is not accidentally a public IRC
+# server on the homelab's network.
+
+services:
+  ergo:
+    image: ghcr.io/ergochat/ergo:v2.14.0
+    container_name: irc-web-ergo
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6667:6667"
+      - "127.0.0.1:6697:6697"
+    volumes:
+      - ergo-data:/ircd/data
+    healthcheck:
+      # A TCP accept is enough: if the port answers, the client can register.
+      test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 6667 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  ergo-data:

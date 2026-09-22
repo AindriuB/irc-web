@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>irc-web</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>irc-web</h1>
+  <span id="state" class="state idle">idle</span>
+  <span class="grow"></span>
+  <button id="toggle-raw" type="button" class="ghost">wire traffic</button>
+</header>
+
+<main>
+  <aside id="left">
+    <form id="connect">
+      <label>Server
+        <select id="server" required></select>
+      </label>
+      <p id="server-notes" class="notes"></p>
+
+      <label>Nick
+        <input id="nick" required autocomplete="off" spellcheck="false">
+      </label>
+
+      <label>Channels
+        <input id="channels" placeholder="#test, #another" autocomplete="off"
+               spellcheck="false">
+      </label>
+
+      <details id="auth">
+        <summary>Authentication</summary>
+        <label>Server password
+          <input id="password" type="password" autocomplete="off"
+                 placeholder="or a Twitch oauth: token">
+        </label>
+        <label>SASL account
+          <input id="sasl-username" autocomplete="off" spellcheck="false"
+                 placeholder="defaults to the nick">
+        </label>
+        <label>SASL password
+          <input id="sasl-password" type="password" autocomplete="off">
+        </label>
+      </details>
+
+      <div class="actions">
+        <button id="go" type="submit">Connect</button>
+        <button id="stop" type="button" class="ghost" disabled>Disconnect</button>
+      </div>
+    </form>
+
+    <section id="channels-list">
+      <h2>Channels</h2>
+      <ul id="channel-tabs"></ul>
+    </section>
+  </aside>
+
+  <section id="centre">
+    <div id="topic" class="topic"></div>
+    <ol id="log"></ol>
+    <form id="say">
+      <input id="input" placeholder="message, or /join #chan, /part, /raw LIST"
+             autocomplete="off" disabled>
+      <button type="submit" disabled>Send</button>
+    </form>
+  </section>
+
+  <aside id="right">
+    <h2>Members <span id="member-count"></span></h2>
+    <ul id="members"></ul>
+  </aside>
+
+  <aside id="raw" hidden>
+    <h2>Wire traffic</h2>
+    <ol id="raw-log"></ol>
+  </aside>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

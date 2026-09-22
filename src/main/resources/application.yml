@@ -1,0 +1,18 @@
+spring:
+  application:
+    name: irc-web
+  config:
+    # The server directory is its own file: it is data that changes for reasons
+    # unrelated to the application's settings, and it is the thing most likely
+    # to be edited by whoever is testing.
+    import: classpath:config/servers.yml
+
+server:
+  port: 8081
+
+logging:
+  level:
+    # The library's own logging is half the value of a test harness. Debug shows
+    # the registration handshake, rate limiting decisions and reconnect attempts.
+    io.github.aindriub.irc.client: DEBUG
+    io.github.aindriub.ircweb: DEBUG

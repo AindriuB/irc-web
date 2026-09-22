@@ -1,0 +1,138 @@
+# A directory of IRC servers to test irc-client against.
+#
+# Ordered roughly by how useful each is as a test target. The local one first,
+# because a test that needs the internet is a test that fails for reasons that
+# have nothing to do with the code.
+#
+# Fields:
+#   id          stable key, used by the UI and by tests
+#   name        what a human calls it
+#   host/port   where to connect
+#   tls         use a TLS port; false means plaintext
+#   sasl        whether the network supports SASL PLAIN
+#   registered  whether a registered account is needed to be useful
+#   exercises   which parts of the library this target is good for proving
+#   notes       anything that will otherwise be rediscovered the hard way
+
+irc:
+  servers:
+
+    - id: local
+      name: Local (ergo, docker compose)
+      host: 127.0.0.1
+      port: 6667
+      tls: false
+      sasl: false
+      registered: false
+      exercises: [registration, channels, messaging, modes, names, reconnect]
+      notes: >
+        Started by docker/compose.yaml in this project. The only target that can
+        be restarted mid-test, which makes it the only one that can exercise
+        reconnection honestly. Use this first; reach for a public network only
+        to prove something the local one cannot.
+
+    - id: local-tls
+      name: Local (ergo, TLS)
+      host: localhost
+      port: 6697
+      tls: true
+      sasl: true
+      registered: false
+      exercises: [tls, sasl, registration]
+      notes: >
+        Same container, self-signed certificate. Needs trustAllCertificates,
+        which is exactly why that option exists. Proves the TLS and SASL paths
+        without depending on a public network being reachable or in a good mood.
+
+    - id: libera
+      name: Libera.Chat
+      host: irc.libera.chat
+      port: 6697
+      tls: true
+      sasl: true
+      registered: false
+      exercises: [tls, sasl, isupport, channels, messaging]
+      notes: >
+        The largest FOSS network and the best behaved public target. Unregistered
+        connections can join most channels. Registering a nick with NickServ and
+        using SASL is worthwhile: it is the combination most users of this
+        library will actually run. Test in ##test or a channel you own, never in
+        a project's real support channel.
+
+    - id: oftc
+      name: OFTC
+      host: irc.oftc.net
+      port: 6697
+      tls: true
+      sasl: true
+      registered: false
+      exercises: [tls, sasl, isupport, channels]
+      notes: >
+        Second opinion to Libera, and a different ircd (hybrid derived), so it is
+        the cheapest way to catch something accidentally specific to one
+        implementation. #oftc-test exists for this.
+
+    - id: ircnet
+      name: IRCnet
+      host: open.ircnet.net
+      port: 6667
+      tls: false
+      sasl: false
+      registered: false
+      exercises: [registration, channels, plaintext]
+      notes: >
+        Deliberately old fashioned - no services, no SASL, no account
+        registration at all. Useful precisely because it is the least modern
+        thing still running: if the client works here it is not quietly relying
+        on a convenience that only newer networks provide.
+
+    - id: efnet
+      name: EFnet
+      host: irc.efnet.org
+      port: 6697
+      tls: true
+      sasl: false
+      registered: false
+      exercises: [tls, registration, channels]
+      notes: >
+        No services and no nick ownership, so nick collisions are ordinary rather
+        than exceptional. That makes it a good place to exercise the
+        ERR_NICKNAMEINUSE retry path against a server that means it.
+
+    - id: rizon
+      name: Rizon
+      host: irc.rizon.net
+      port: 6697
+      tls: true
+      sasl: true
+      registered: false
+      exercises: [tls, sasl, isupport]
+      notes: >
+        Runs a Unreal/Plexus lineage ircd, so its ISUPPORT advertises a different
+        CHANMODES and PREFIX set to Libera's. Good for proving the mode parser
+        reads the server's definitions rather than assuming RFC defaults.
+
+    - id: twitch
+      name: Twitch
+      host: irc.chat.twitch.tv
+      port: 6697
+      tls: true
+      sasl: false
+      registered: true
+      exercises: [tls, tags, capabilities, flood]
+      notes: >
+        Not really IRC any more, and that is the point. Requires PASS with an
+        oauth token, sends IRCv3 message tags heavily, and enforces its own rate
+        limits. The best target for the tag parser and the flood protection.
+        Needs a token from dev.twitch.tv; it will not accept an anonymous
+        connection for anything useful.
+
+# Etiquette, because these are other people's servers:
+#
+#   Use a distinctive nick, not "bot" or "test".
+#   Test in ##test, #test, a channel you created, or a network's own test
+#   channel - never in a project's support channel.
+#   Leave flood protection on. The defaults are well inside every network's
+#   limits and the one time it matters you will not get a warning first.
+#   Reconnect loops against a public server are noticed. Use the local
+#   container for anything that involves deliberately breaking the connection.

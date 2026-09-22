@@ -1,0 +1,79 @@
+package io.github.aindriub.ircweb.irc;
+
+import java.util.List;
+
+/**
+ * Anything sent to the browser.
+ *
+ * <p>One shape with nullable fields rather than a type per event: the browser
+ * switches on {@code type} either way, and a single record keeps the JSON contract
+ * visible in one place.
+ */
+public record OutboundEvent(
+        String type,
+        String state,
+        String detail,
+        String target,
+        String sender,
+        String text,
+        Boolean self,
+        String kind,
+        String channel,
+        String nick,
+        String reason,
+        String topic,
+        String direction,
+        String line,
+        List<String> channels,
+        List<Member> members) {
+
+    /**
+     * One person in a channel.
+     *
+     * @param prefix the status character a client shows, such as {@code @}
+     */
+    public record Member(String nick, String prefix, boolean operator) {
+    }
+
+    public static OutboundEvent status(String state, String detail) {
+        return new OutboundEvent("status", state, detail, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
+    }
+
+    public static OutboundEvent message(String target, String sender, String text,
+            boolean self) {
+        return new OutboundEvent("message", null, null, target, sender, text, self, null, null,
+                null, null, null, null, null, null, null);
+    }
+
+    public static OutboundEvent notice(String target, String sender, String text) {
+        return new OutboundEvent("notice", null, null, target, sender, text, false, null, null,
+                null, null, null, null, null, null, null);
+    }
+
+    public static OutboundEvent presence(String kind, String channel, String nick,
+            String reason) {
+        return new OutboundEvent("presence", null, null, null, null, null, null, kind, channel,
+                nick, reason, null, null, null, null, null);
+    }
+
+    public static OutboundEvent channels(List<String> channels) {
+        return new OutboundEvent("channels", null, null, null, null, null, null, null, null,
+                null, null, null, null, null, channels, null);
+    }
+
+    public static OutboundEvent names(String channel, String topic, List<Member> members) {
+        return new OutboundEvent("names", null, null, null, null, null, null, null, channel,
+                null, null, topic, null, null, null, members);
+    }
+
+    public static OutboundEvent raw(String direction, String line) {
+        return new OutboundEvent("raw", null, null, null, null, null, null, null, null, null,
+                null, null, direction, line, null, null);
+    }
+
+    public static OutboundEvent error(String detail) {
+        return new OutboundEvent("error", null, detail, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
+    }
+}
