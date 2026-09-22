@@ -4,9 +4,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.EnumSet;
+import java.util.Set;
 
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
@@ -63,23 +65,70 @@ public class SecretCodec {
         Files.createDirectories(dataDir);
         Path keyFile = dataDir.resolve("secret.key");
         if (Files.exists(keyFile)) {
-            return new SecretKeySpec(Base64.getDecoder().decode(Files.readString(keyFile).trim()),
-                    "AES");
+            return new SecretKeySpec(readKey(keyFile), "AES");
         }
 
         byte[] fresh = new byte[KEY_BITS / 8];
         new SecureRandom().nextBytes(fresh);
-        Files.writeString(keyFile, Base64.getEncoder().encodeToString(fresh));
-        try {
-            Files.setPosixFilePermissions(keyFile,
-                    EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
-        } catch (UnsupportedOperationException e) {
-            LOGGER.warn("Could not restrict permissions on {}", keyFile);
-        }
+        writeKey(keyFile, fresh);
+
         LOGGER.info("Generated a secret key at {}. Back it up with the database, or set "
                 + "IRC_WEB_SECRET_KEY; without it the stored passwords cannot be read back.",
                 keyFile);
         return new SecretKeySpec(fresh, "AES");
+    }
+
+    /**
+     * Creates the file owner-only in one step.
+     *
+     * <p>Writing first and restricting afterwards leaves the key world-readable for
+     * however long that takes, which is short but not zero, and is exactly the sort
+     * of window that is only ever noticed after it matters. The permissions are a
+     * creation attribute here, so the file never exists in a readable state.
+     */
+    private static void writeKey(Path keyFile, byte[] key) throws Exception {
+        String encoded = Base64.getEncoder().encodeToString(key);
+        Set<PosixFilePermission> ownerOnly =
+                EnumSet.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE);
+        try {
+            Files.write(
+                    Files.createFile(keyFile, PosixFilePermissions.asFileAttribute(ownerOnly)),
+                    encoded.getBytes(StandardCharsets.UTF_8));
+        } catch (UnsupportedOperationException e) {
+            // A filesystem without POSIX permissions, such as Windows. Say so
+            // rather than leaving the caller to assume the key is protected.
+            LOGGER.warn("This filesystem does not support POSIX permissions, so {} is created "
+                    + "with whatever the default allows. Restrict it by hand, or set "
+                    + "IRC_WEB_SECRET_KEY and keep the key out of the data directory.", keyFile);
+            Files.write(keyFile, encoded.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * Reads and validates a key file.
+     *
+     * <p>Validated for the same reason the configured key is: a truncated or
+     * corrupted file otherwise produces a key of the wrong size, and the failure
+     * surfaces as decrypt returning null - which reads as "re-enter your password"
+     * - while encrypt throws. Failing at startup names the real problem once
+     * instead of presenting it as a dozen small mysteries later.
+     */
+    private static byte[] readKey(Path keyFile) throws Exception {
+        String contents = new String(Files.readAllBytes(keyFile), StandardCharsets.UTF_8).trim();
+        byte[] decoded;
+        try {
+            decoded = Base64.getDecoder().decode(contents);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalStateException(keyFile + " is not valid base64. Restore it from a "
+                    + "backup, or delete it and re-enter the stored passwords.", e);
+        }
+        if (decoded.length != KEY_BITS / 8) {
+            throw new IllegalStateException(keyFile + " holds a " + (decoded.length * 8)
+                    + " bit key; " + KEY_BITS + " is required. It is truncated or corrupt. "
+                    + "Restore it from a backup, or delete it and re-enter the stored "
+                    + "passwords.");
+        }
+        return decoded;
     }
 
     /**

@@ -138,9 +138,13 @@ every edit made in the UI.
 
 Passwords are encrypted at rest with AES-GCM. The key comes from
 `IRC_WEB_SECRET_KEY`, or is generated into the data directory on first start so the
-default path still encrypts rather than quietly storing plaintext. Back it up with
-the database; without it the stored passwords cannot be read back, which is an
-inconvenience rather than a loss since they can be entered again.
+default path still encrypts rather than quietly storing plaintext. The generated file
+is created owner-only in a single step, so it never exists in a readable state, and
+is validated on every start — a truncated key fails loudly at startup rather than
+surfacing later as passwords that mysteriously need re-entering.
+
+Back it up with the database; without it the stored passwords cannot be read back,
+which is an inconvenience rather than a loss since they can be entered again.
 
 **The API never returns a stored password** — only whether one is set. This
 application holds credentials for other people's networks, and a readable-back
