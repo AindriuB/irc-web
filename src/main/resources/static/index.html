@@ -12,7 +12,7 @@
   <h1>irc-web</h1>
   <span id="state" class="state idle">idle</span>
   <span class="grow"></span>
-  <button id="toggle-raw" type="button" class="ghost">wire traffic</button>
+  <span id="wire-hint" class="hint">wire traffic is a tab</span>
 </header>
 
 <main>
@@ -54,7 +54,7 @@
     </form>
 
     <section id="channels-list">
-      <h2>Channels</h2>
+      <h2>Buffers</h2>
       <ul id="channel-tabs"></ul>
     </section>
   </aside>
@@ -72,11 +72,6 @@
   <aside id="right">
     <h2>Members <span id="member-count"></span></h2>
     <ul id="members"></ul>
-  </aside>
-
-  <aside id="raw" hidden>
-    <h2>Wire traffic</h2>
-    <ol id="raw-log"></ol>
   </aside>
 </main>
 

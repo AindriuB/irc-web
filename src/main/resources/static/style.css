@@ -43,7 +43,6 @@ main { flex: 1; display: flex; min-height: 0; }
 aside, #centre { min-height: 0; }
 #left { width: 290px; border-right: 1px solid var(--line); padding: 14px; overflow-y: auto; background: var(--panel); }
 #right { width: 180px; border-left: 1px solid var(--line); padding: 14px; overflow-y: auto; background: var(--panel); }
-#raw { width: 420px; border-left: 1px solid var(--line); padding: 14px; overflow: hidden; display: flex; flex-direction: column; background: var(--panel); }
 #centre { flex: 1; display: flex; flex-direction: column; }
 
 h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); margin: 0 0 8px; }
@@ -76,7 +75,7 @@ details summary { font-size: 11px; text-transform: uppercase; letter-spacing: 0.
 
 .topic { padding: 8px 16px; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 12px; }
 
-#log, #raw-log { list-style: none; margin: 0; padding: 10px 16px; overflow-y: auto; flex: 1; }
+#log { list-style: none; margin: 0; padding: 10px 16px; overflow-y: auto; flex: 1; }
 #log li { display: flex; gap: 8px; padding: 1px 0; word-break: break-word; }
 #log time { color: #4d5566; flex: none; }
 #log .who { color: var(--accent); flex: none; }
@@ -95,7 +94,18 @@ details summary { font-size: 11px; text-transform: uppercase; letter-spacing: 0.
 #members li { padding: 2px 0; color: var(--dim); }
 #members li.op { color: var(--good); }
 
-#raw-log { font-size: 11.5px; }
-#raw-log li { padding: 1px 0; word-break: break-all; }
-#raw-log li.in { color: var(--dim); }
-#raw-log li.out { color: var(--accent); }
+/* The wire buffer is read as a stream of protocol lines rather than as
+   conversation, so it gets tighter leading, smaller type and room to run the
+   full width of the pane. */
+#log.wire { font-size: 12px; line-height: 1.45; }
+#log.wire li { padding: 0; }
+#log .arrow { flex: none; width: 18px; color: #4d5566; }
+#log li.raw-in .body { color: var(--dim); }
+#log li.raw-out .body { color: var(--accent); }
+#log li.raw-in .body, #log li.raw-out .body { word-break: break-all; }
+
+.hint { font-size: 11px; color: #4d5566; }
+
+#channel-tabs li.pinned { color: #98a0b3; }
+#channel-tabs li.pinned.active { color: var(--accent); }
+#channel-tabs li.pinned + li:not(.pinned) { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 10px; }

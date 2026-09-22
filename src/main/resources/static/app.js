@@ -23,8 +23,7 @@ const ui = {
   sayButton: document.querySelector('#say button'),
   members: $('members'),
   memberCount: $('member-count'),
-  raw: $('raw'),
-  rawLog: $('raw-log'),
+  right: $('right'),
 };
 
 let socket = null;
@@ -34,7 +33,13 @@ const buffers = new Map();      // target -> [{kind, sender, text, at}]
 const memberLists = new Map();  // channel -> [{nick, prefix, operator}]
 const topics = new Map();
 
+// Two buffers that are not channels but behave like them, so everything gets the
+// full width of the centre pane rather than a column squeezed in beside it.
 const STATUS_BUFFER = '*status*';
+const WIRE_BUFFER = '*wire*';
+const PINNED = [STATUS_BUFFER, WIRE_BUFFER];
+
+const LABELS = { [STATUS_BUFFER]: 'status', [WIRE_BUFFER]: 'wire traffic' };
 
 // ---------------------------------------------------------------- server list
 
@@ -139,7 +144,7 @@ function handle(event) {
       break;
 
     case 'raw':
-      appendRaw(event.direction, event.line);
+      append(WIRE_BUFFER, event.direction === 'out' ? 'raw-out' : 'raw-in', null, event.line);
       break;
 
     case 'error':
@@ -185,6 +190,12 @@ function renderLog() {
     const time = document.createElement('time');
     time.textContent = entry.at.toTimeString().slice(0, 8);
     li.append(time);
+    if (entry.kind === 'raw-in' || entry.kind === 'raw-out') {
+      const arrow = document.createElement('span');
+      arrow.className = 'arrow';
+      arrow.textContent = entry.kind === 'raw-out' ? '>>' : '<<';
+      li.append(arrow);
+    }
     if (entry.sender) {
       const who = document.createElement('span');
       who.className = 'who';
@@ -201,7 +212,7 @@ function renderLog() {
 }
 
 function renderTabs(channels) {
-  const wanted = [STATUS_BUFFER, ...channels];
+  const wanted = [...PINNED, ...channels];
   for (const target of wanted) {
     if (!ui.tabs.querySelector(`[data-target="${cssEscape(target)}"]`)) { addTab(target); }
   }
@@ -213,7 +224,8 @@ function renderTabs(channels) {
 function addTab(target) {
   const li = document.createElement('li');
   li.dataset.target = target;
-  li.textContent = target === STATUS_BUFFER ? 'status' : target;
+  li.textContent = LABELS[target] || target;
+  if (PINNED.includes(target)) { li.classList.add('pinned'); }
   li.addEventListener('click', () => select(target));
   if (target === active) { li.classList.add('active'); }
   ui.tabs.append(li);
@@ -224,9 +236,21 @@ function select(target) {
   for (const li of ui.tabs.children) {
     li.classList.toggle('active', li.dataset.target === target);
   }
+  const channel = isChannel(target);
+  // A member list beside the wire log is empty and just narrows the thing you
+  // are trying to read.
+  ui.right.hidden = !channel;
+  ui.log.classList.toggle('wire', target === WIRE_BUFFER);
+  ui.input.placeholder = target === WIRE_BUFFER
+    ? 'raw IRC line, sent exactly as typed - e.g. LIST or WHOIS someone'
+    : 'message, or /join #chan, /part, /raw LIST';
   renderLog();
   renderMembers();
   renderTopic();
+}
+
+function isChannel(target) {
+  return target && !PINNED.includes(target);
 }
 
 function renderMembers() {
@@ -244,15 +268,6 @@ function renderTopic() {
   const topic = topics.get(active);
   ui.topic.textContent = topic || '';
   ui.topic.hidden = !topic;
-}
-
-function appendRaw(direction, line) {
-  const li = document.createElement('li');
-  li.className = direction;
-  li.textContent = `${direction === 'in' ? '<<' : '>>'} ${line}`;
-  ui.rawLog.append(li);
-  while (ui.rawLog.children.length > 500) { ui.rawLog.firstChild.remove(); }
-  ui.rawLog.scrollTop = ui.rawLog.scrollHeight;
 }
 
 // -------------------------------------------------------------------- input
@@ -281,7 +296,11 @@ function say(event) {
     }
   }
 
-  if (!active || active === STATUS_BUFFER) {
+  if (active === WIRE_BUFFER) {
+    send({ type: 'raw', line: text });
+    return;
+  }
+  if (!isChannel(active)) {
     append(STATUS_BUFFER, 'error', null, 'pick a channel first, or use /msg');
     return;
   }
@@ -303,6 +322,9 @@ $('connect').addEventListener('submit', connect);
 ui.stop.addEventListener('click', disconnect);
 ui.server.addEventListener('change', showNotes);
 $('say').addEventListener('submit', say);
-$('toggle-raw').addEventListener('click', () => { ui.raw.hidden = !ui.raw.hidden; });
+// The pinned buffers exist before anything connects, so there is somewhere for
+// early status and wire lines to land.
+renderTabs([]);
+select(STATUS_BUFFER);
 
 loadServers();
