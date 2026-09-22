@@ -36,8 +36,16 @@ public record OutboundEvent(
     }
 
     public static OutboundEvent status(String state, String detail) {
+        return status(state, detail, null);
+    }
+
+    /**
+     * @param nick the nick actually in use, which the browser needs in order to spot
+     *             a mention of itself. It is not always the one that was asked for.
+     */
+    public static OutboundEvent status(String state, String detail, String nick) {
         return new OutboundEvent("status", state, detail, null, null, null, null, null, null,
-                null, null, null, null, null, null, null);
+                nick, null, null, null, null, null, null);
     }
 
     public static OutboundEvent message(String target, String sender, String text,
@@ -70,6 +78,14 @@ public record OutboundEvent(
     public static OutboundEvent raw(String direction, String line) {
         return new OutboundEvent("raw", null, null, null, null, null, null, null, null, null,
                 null, null, direction, line, null, null);
+    }
+
+    /**
+     * A numeric reply worth showing a human: a WHOIS line, an error, a topic.
+     */
+    public static OutboundEvent server(String numeric, String text) {
+        return new OutboundEvent("server", numeric, text, null, null, null, null, null, null,
+                null, null, null, null, null, null, null);
     }
 
     public static OutboundEvent error(String detail) {

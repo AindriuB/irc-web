@@ -24,12 +24,16 @@ const ui = {
   members: $('members'),
   memberCount: $('member-count'),
   right: $('right'),
+  menu: $('user-menu'),
 };
 
 let socket = null;
 let servers = [];
 let active = null;              // the channel currently being viewed
+let myNick = null;              // as the server gave it, not as it was asked for
 const buffers = new Map();      // target -> [{kind, sender, text, at}]
+const unread = new Map();       // target -> {count, mention}
+const queries = new Set();      // one-to-one conversations, which the server never lists
 const memberLists = new Map();  // channel -> [{nick, prefix, operator}]
 const topics = new Map();
 
@@ -112,16 +116,22 @@ function disconnect() {
 function handle(event) {
   switch (event.type) {
     case 'status':
+      if (event.nick) { myNick = event.nick; }
       setState(event.state, event.detail);
       if (event.detail) { append(STATUS_BUFFER, 'system', null, event.detail); }
       break;
 
     case 'message':
-      append(event.target, event.self ? 'self' : 'message', event.sender, event.text);
+      append(bufferFor(event), event.self ? 'self' : 'message', event.sender, event.text);
       break;
 
     case 'notice':
-      append(event.target || STATUS_BUFFER, 'notice', event.sender, event.text);
+      append(isChannelName(event.target) ? event.target : STATUS_BUFFER,
+        'notice', event.sender, event.text);
+      break;
+
+    case 'server':
+      append(STATUS_BUFFER, 'server', event.state, event.detail);
       break;
 
     case 'presence': {
@@ -153,6 +163,30 @@ function handle(event) {
   }
 }
 
+/**
+ * Which buffer a message belongs in. A channel message goes to the channel; a
+ * private one goes to a buffer named after the other person, because the target of
+ * an incoming private message is our own nick and a buffer named after ourselves is
+ * no use to anybody.
+ */
+function bufferFor(event) {
+  if (isChannelName(event.target)) { return event.target; }
+  const other = event.self ? event.target : event.sender;
+  if (other) { openQuery(other); return other; }
+  return STATUS_BUFFER;
+}
+
+function isChannelName(target) {
+  return Boolean(target) && '#&!+'.includes(target[0]);
+}
+
+function openQuery(nick) {
+  if (!queries.has(nick)) {
+    queries.add(nick);
+    if (!ui.tabs.querySelector(`[data-target="${cssEscape(nick)}"]`)) { addTab(nick); }
+  }
+}
+
 function setState(state, detail) {
   ui.state.textContent = detail ? `${state} — ${detail}` : state;
   ui.state.className = `state ${state}`;
@@ -169,10 +203,21 @@ function setState(state, detail) {
 
 // ------------------------------------------------------------------ rendering
 
+// Wire traffic would light up permanently and so would mean nothing, and joins
+// and parts are noise rather than something waiting to be read.
+const BADGED = new Set(['message', 'notice']);
+
 function append(target, kind, sender, text) {
   if (!buffers.has(target)) { buffers.set(target, []); }
   const buffer = buffers.get(target);
   buffer.push({ kind, sender, text, at: new Date() });
+
+  if (target !== active && BADGED.has(kind)) {
+    const state = unread.get(target) || { count: 0, mention: false };
+    state.count += 1;
+    state.mention = state.mention || mentionsMe(text);
+    unread.set(target, state);
+  }
   // A busy channel will fill memory over a long session otherwise, and this is
   // meant to be left running.
   if (buffer.length > 2000) { buffer.splice(0, buffer.length - 2000); }
@@ -180,6 +225,19 @@ function append(target, kind, sender, text) {
   if (!active) { select(target); }
   if (target === active) { renderLog(); }
   if (!ui.tabs.querySelector(`[data-target="${cssEscape(target)}"]`)) { addTab(target); }
+  paintTab(target);
+}
+
+/**
+ * A mention is the nick as a whole word. Substring matching turns every message
+ * containing "bot" into a highlight for a nick like "bot", which trains people to
+ * ignore the thing entirely.
+ */
+function mentionsMe(text) {
+  if (!myNick || !text) { return false; }
+  const escaped = myNick.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^\\w[\\]\\\\\`^{|}-])${escaped}([^\\w[\\]\\\\\`^{|}-]|$)`, 'i')
+    .test(text);
 }
 
 function renderLog() {
@@ -212,7 +270,7 @@ function renderLog() {
 }
 
 function renderTabs(channels) {
-  const wanted = [...PINNED, ...channels];
+  const wanted = [...PINNED, ...channels, ...queries];
   for (const target of wanted) {
     if (!ui.tabs.querySelector(`[data-target="${cssEscape(target)}"]`)) { addTab(target); }
   }
@@ -224,22 +282,44 @@ function renderTabs(channels) {
 function addTab(target) {
   const li = document.createElement('li');
   li.dataset.target = target;
-  li.textContent = LABELS[target] || target;
   if (PINNED.includes(target)) { li.classList.add('pinned'); }
+
+  const label = document.createElement('span');
+  label.className = 'label';
+  label.textContent = LABELS[target] || target;
+  li.append(label);
+
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  li.append(badge);
+
   li.addEventListener('click', () => select(target));
   if (target === active) { li.classList.add('active'); }
   ui.tabs.append(li);
+  paintTab(target);
+}
+
+function paintTab(target) {
+  const li = ui.tabs.querySelector(`[data-target="${cssEscape(target)}"]`);
+  if (!li) { return; }
+  const state = unread.get(target);
+  const badge = li.querySelector('.badge');
+  li.classList.toggle('unread', Boolean(state && state.count));
+  li.classList.toggle('mention', Boolean(state && state.mention));
+  badge.textContent = state && state.count ? (state.count > 99 ? '99+' : state.count) : '';
 }
 
 function select(target) {
   active = target;
+  // Reading it is what clears it.
+  unread.delete(target);
+  paintTab(target);
   for (const li of ui.tabs.children) {
     li.classList.toggle('active', li.dataset.target === target);
   }
-  const channel = isChannel(target);
-  // A member list beside the wire log is empty and just narrows the thing you
-  // are trying to read.
-  ui.right.hidden = !channel;
+  // A member list beside the wire log or a one-to-one conversation is empty and
+  // just narrows the thing you are trying to read.
+  ui.right.hidden = !isChannelName(target);
   ui.log.classList.toggle('wire', target === WIRE_BUFFER);
   ui.input.placeholder = target === WIRE_BUFFER
     ? 'raw IRC line, sent exactly as typed - e.g. LIST or WHOIS someone'
@@ -247,6 +327,7 @@ function select(target) {
   renderLog();
   renderMembers();
   renderTopic();
+  paintTab(target);
 }
 
 function isChannel(target) {
@@ -259,9 +340,95 @@ function renderMembers() {
   ui.members.replaceChildren(...members.map((member) => {
     const li = document.createElement('li');
     if (member.operator) { li.classList.add('op'); }
+    if (member.nick === myNick) { li.classList.add('self'); }
     li.textContent = (member.prefix || '') + member.nick;
+    li.addEventListener('click', (event) => openUserMenu(event, member));
     return li;
   }));
+}
+
+// ---------------------------------------------------------------- user menu
+
+/**
+ * What can be done to someone depends on what we are: the moderation items only
+ * appear when we hold op in this channel, because offering an action the server
+ * will refuse teaches people to ignore the menu.
+ */
+function userMenuItems(member) {
+  const nick = member.nick;
+  const channel = active;
+  const items = [
+    { label: `Message ${nick}`, run: () => { openQuery(nick); select(nick); } },
+    { label: 'Whois', run: () => { send({ type: 'raw', line: `WHOIS ${nick}` }); select(STATUS_BUFFER); } },
+  ];
+
+  if (nick === myNick) { return items; }
+
+  if (iAmOperatorIn(channel)) {
+    items.push({ separator: true });
+    items.push(member.operator
+      ? { label: 'Take op', run: () => mode(channel, '-o', nick) }
+      : { label: 'Give op', run: () => mode(channel, '+o', nick) });
+    items.push(member.prefix === '+'
+      ? { label: 'Take voice', run: () => mode(channel, '-v', nick) }
+      : { label: 'Give voice', run: () => mode(channel, '+v', nick) });
+    items.push({
+      label: 'Kick…',
+      run: () => {
+        const reason = window.prompt(`Kick ${nick} from ${channel}?`, '');
+        if (reason === null) { return; }
+        send({ type: 'raw', line: reason.trim()
+          ? `KICK ${channel} ${nick} :${reason.trim()}`
+          : `KICK ${channel} ${nick}` });
+      },
+    });
+  }
+  return items;
+}
+
+function iAmOperatorIn(channel) {
+  if (!isChannelName(channel) || !myNick) { return false; }
+  const me = (memberLists.get(channel) || []).find((m) => m.nick === myNick);
+  return Boolean(me && me.operator);
+}
+
+function mode(channel, flags, nick) {
+  send({ type: 'raw', line: `MODE ${channel} ${flags} ${nick}` });
+}
+
+function openUserMenu(event, member) {
+  event.stopPropagation();
+  const items = userMenuItems(member);
+
+  const heading = document.createElement('div');
+  heading.className = 'menu-heading';
+  heading.textContent = member.nick;
+
+  ui.menu.replaceChildren(heading, ...items.map((item) => {
+    if (item.separator) {
+      const hr = document.createElement('hr');
+      return hr;
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = item.label;
+    button.addEventListener('click', () => { closeUserMenu(); item.run(); });
+    return button;
+  }));
+
+  ui.menu.hidden = false;
+  // Measured after it is visible, or the height is zero and a menu near the
+  // bottom of the window runs off the end of it.
+  const { innerHeight, innerWidth } = window;
+  const rect = ui.menu.getBoundingClientRect();
+  const top = Math.min(event.clientY, innerHeight - rect.height - 8);
+  const left = Math.min(event.clientX, innerWidth - rect.width - 8);
+  ui.menu.style.top = `${Math.max(8, top)}px`;
+  ui.menu.style.left = `${Math.max(8, left)}px`;
+}
+
+function closeUserMenu() {
+  ui.menu.hidden = true;
 }
 
 function renderTopic() {
@@ -287,7 +454,19 @@ function say(event) {
       case 'raw': send({ type: 'raw', line: argument }); return;
       case 'msg': {
         const [target, ...words] = rest;
+        if (!isChannelName(target)) { openQuery(target); select(target); }
         send({ type: 'message', target, text: words.join(' ') });
+        append(target, 'self', myNick, words.join(' '));
+        return;
+      }
+      case 'query': {
+        openQuery(rest[0]);
+        select(rest[0]);
+        return;
+      }
+      case 'whois': {
+        send({ type: 'raw', line: `WHOIS ${argument || active}` });
+        select(STATUS_BUFFER);
         return;
       }
       default:
@@ -301,7 +480,7 @@ function say(event) {
     return;
   }
   if (!isChannel(active)) {
-    append(STATUS_BUFFER, 'error', null, 'pick a channel first, or use /msg');
+    append(STATUS_BUFFER, 'error', null, 'pick a channel or a person first, or use /msg');
     return;
   }
   send({ type: 'message', target: active, text });
@@ -322,6 +501,8 @@ $('connect').addEventListener('submit', connect);
 ui.stop.addEventListener('click', disconnect);
 ui.server.addEventListener('change', showNotes);
 $('say').addEventListener('submit', say);
+document.addEventListener('click', closeUserMenu);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeUserMenu(); } });
 // The pinned buffers exist before anything connects, so there is somewhere for
 // early status and wire lines to land.
 renderTabs([]);

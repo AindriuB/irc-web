@@ -1,0 +1,10 @@
+irc-web
+Copyright 2026 Andrew Bannister
+
+This product includes software developed at
+https://github.com/AindriuB/irc-web
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+This product depends on irc-client (https://github.com/AindriuB/irc-client),
+also licensed under the Apache License, Version 2.0.

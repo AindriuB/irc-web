@@ -15,6 +15,29 @@
 	<version>0.1.0-SNAPSHOT</version>
 	<name>irc-web</name>
 	<description>A web front end for irc-client, and the exercise that proves the library works</description>
+	<url>https://github.com/AindriuB/irc-web</url>
+
+	<licenses>
+		<license>
+			<name>The Apache License, Version 2.0</name>
+			<url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+			<distribution>repo</distribution>
+		</license>
+	</licenses>
+
+	<developers>
+		<developer>
+			<id>AindriuB</id>
+			<name>Andrew Bannister</name>
+			<url>https://github.com/AindriuB</url>
+		</developer>
+	</developers>
+
+	<scm>
+		<connection>scm:git:https://github.com/AindriuB/irc-web.git</connection>
+		<developerConnection>scm:git:git@github.com:AindriuB/irc-web.git</developerConnection>
+		<url>https://github.com/AindriuB/irc-web</url>
+	</scm>
 
 	<properties>
 		<java.version>21</java.version>
@@ -55,6 +78,23 @@
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
+			</plugin>
+			<!-- The tests here are *IT, which surefire does not pick up: a name
+			     that does not match its patterns is silently skipped, and a
+			     suite that quietly runs nothing is worse than no suite. They
+			     drive a real IRC server, so failsafe and mvn verify is the
+			     right home for them anyway. -->
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-failsafe-plugin</artifactId>
+				<executions>
+					<execution>
+						<goals>
+							<goal>integration-test</goal>
+							<goal>verify</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>

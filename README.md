@@ -90,6 +90,14 @@ member lists, a message travelling between two browser sessions through the IRC
 server, and raw lines reaching the browser. It **skips** rather than fails when the
 container is not running — worth remembering that a skipped test has proved nothing.
 
+## Licence
+
+Apache License 2.0. See [LICENSE](LICENSE).
+
+This is a test harness, not a product: **there is no authentication.** Anyone who can
+reach the port can connect to any network in the directory under any nick, and the
+wire buffer sends raw IRC commands. Keep it on a trusted network.
+
 ## Depending on irc-client
 
 ```xml

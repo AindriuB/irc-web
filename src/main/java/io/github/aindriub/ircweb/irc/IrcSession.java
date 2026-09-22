@@ -29,6 +29,17 @@ public class IrcSession {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(IrcSession.class);
 
+    /**
+     * Numerics that are either already shown somewhere better or are pure volume:
+     * the MOTD, the NAMES reply the member list is built from, and ISUPPORT. Showing
+     * these buries the replies a person actually asked for, such as a WHOIS.
+     */
+    private static final java.util.Set<String> QUIET = java.util.Set.of(
+            "001", "002", "003", "004", "005",
+            "251", "252", "253", "254", "255", "265", "266",
+            "353", "366",
+            "372", "375", "376", "422");
+
     private final Consumer<OutboundEvent> sink;
     private final AtomicBoolean running = new AtomicBoolean();
 
@@ -160,7 +171,8 @@ public class IrcSession {
 
         @Override
         public void onReady(IRCBot bot) {
-            sink.accept(OutboundEvent.status("ready", "registered as " + bot.getNick()));
+            sink.accept(OutboundEvent.status("ready", "registered as " + bot.getNick(),
+                    bot.getNick()));
             publishChannels();
         }
 
@@ -202,6 +214,9 @@ public class IrcSession {
             if ("366".equals(message.getCommand()) && message.getParam(1) != null) {
                 publishNames(message.getParam(1));
             }
+            if (message.isNumeric() && !QUIET.contains(message.getCommand())) {
+                sink.accept(OutboundEvent.server(message.getCommand(), readable(message)));
+            }
         }
     }
 
@@ -235,6 +250,18 @@ public class IrcSession {
                 .map(IrcSession::toMember)
                 .toList();
         sink.accept(OutboundEvent.names(state.getName(), state.getTopic(), members));
+    }
+
+    /**
+     * A numeric's parameters minus the first, which is always our own nick and adds
+     * nothing to a line someone is reading about themselves.
+     */
+    private static String readable(IRCMessage message) {
+        List<String> params = message.getParams();
+        if (params.isEmpty()) {
+            return message.getCommand();
+        }
+        return String.join(" ", params.subList(1, params.size()));
     }
 
     private static OutboundEvent.Member toMember(ChannelUser user) {
