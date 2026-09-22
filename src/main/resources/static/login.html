@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>irc-web — sign in</title>
+<link rel="stylesheet" href="login.css">
+</head>
+<body>
+<main>
+  <h1>irc-web</h1>
+  <p class="sub">A web front end that exercises irc-client</p>
+
+  <form method="post" action="/api/login">
+    <label>Username
+      <input name="username" autocomplete="username" required autofocus>
+    </label>
+    <label>Password
+      <input name="password" type="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+
+  <p id="message" class="message"></p>
+
+  <p class="note">
+    On first start a password is generated and printed to the application log.
+    <code>docker compose logs irc-web</code>
+  </p>
+</main>
+
+<script>
+  // Spring redirects here with a marker rather than a body, so the message is
+  // assembled on this side.
+  const params = new URLSearchParams(location.search);
+  const message = document.getElementById('message');
+  if (params.has('failed')) {
+    message.textContent = 'That username and password did not match.';
+    message.className = 'message bad';
+  } else if (params.has('out')) {
+    message.textContent = 'Signed out.';
+    message.className = 'message good';
+  }
+</script>
+</body>
+</html>

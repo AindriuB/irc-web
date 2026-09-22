@@ -25,7 +25,60 @@ const ui = {
   memberCount: $('member-count'),
   right: $('right'),
   menu: $('user-menu'),
+  who: $('who'),
+  nag: $('password-nag'),
+  saveProfile: $('save-profile'),
+  profileState: $('profile-state'),
+  serverDialog: $('server-dialog'),
+  passwordDialog: $('password-dialog'),
 };
+
+let editingServerId = null;   // null while adding, an id while editing
+
+// ------------------------------------------------------------------- fetch
+
+/**
+ * Every call goes through here for two reasons: the CSRF token has to ride
+ * along on anything that changes state, and a 401 means the session went away,
+ * which is a reload rather than an error message nobody can act on.
+ */
+async function api(path, options = {}) {
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = { ...(options.headers || {}) };
+  if (options.body !== undefined) { headers['Content-Type'] = 'application/json'; }
+  if (method !== 'GET') {
+    const token = readCookie('XSRF-TOKEN');
+    if (token) { headers['X-XSRF-TOKEN'] = token; }
+  }
+
+  const response = await fetch(path, {
+    ...options,
+    method,
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+
+  if (response.status === 401) {
+    location.href = '/login.html';
+    throw new Error('signed out');
+  }
+  if (!response.ok) {
+    let detail = `${response.status}`;
+    try {
+      const body = await response.json();
+      if (body && body.error) { detail = body.error; }
+    } catch (ignored) { /* a non-JSON error body is still an error */ }
+    throw new Error(detail);
+  }
+  return response.status === 204 ? null : response.json();
+}
+
+function readCookie(name) {
+  return document.cookie.split('; ')
+    .map((pair) => pair.split('='))
+    .filter(([key]) => key === name)
+    .map(([, value]) => decodeURIComponent(value))[0];
+}
 
 let socket = null;
 let servers = [];
@@ -47,9 +100,15 @@ const LABELS = { [STATUS_BUFFER]: 'status', [WIRE_BUFFER]: 'wire traffic' };
 
 // ---------------------------------------------------------------- server list
 
-async function loadServers() {
-  const response = await fetch('/api/servers');
-  servers = await response.json();
+async function loadMe() {
+  const me = await api('/api/me');
+  ui.who.textContent = me.username;
+  ui.nag.hidden = !me.generatedPassword;
+}
+
+async function loadServers(selectId) {
+  const wanted = selectId || ui.server.value;
+  servers = await api('/api/servers');
   ui.server.innerHTML = '';
   for (const server of servers) {
     const option = document.createElement('option');
@@ -58,7 +117,59 @@ async function loadServers() {
       (server.tls ? ' (TLS)' : '');
     ui.server.append(option);
   }
+  if (wanted && servers.some((s) => s.id === wanted)) { ui.server.value = wanted; }
   showNotes();
+  loadProfile();
+}
+
+// ------------------------------------------------------------------ profile
+
+async function loadProfile() {
+  const id = ui.server.value;
+  if (!id) { return; }
+  let profile;
+  try {
+    profile = await api(`/api/servers/${encodeURIComponent(id)}/profile`);
+  } catch (e) {
+    ui.profileState.textContent = `could not load saved details: ${e.message}`;
+    return;
+  }
+
+  ui.nick.value = profile.nick || '';
+  ui.channels.value = (profile.channels || []).join(', ');
+  ui.saslUser.value = profile.saslUsername || '';
+
+  // Stored passwords are never sent here, so the field shows whether one exists
+  // rather than what it is. Leaving it blank keeps it; the placeholder says so.
+  ui.password.value = '';
+  ui.saslPass.value = '';
+  ui.password.placeholder = profile.hasPassword
+    ? 'stored - leave blank to keep it' : 'or a Twitch oauth: token';
+  ui.saslPass.placeholder = profile.hasSaslPassword
+    ? 'stored - leave blank to keep it' : '';
+
+  ui.profileState.textContent = profile.updatedAt
+    ? `saved ${new Date(profile.updatedAt).toLocaleString()}`
+    : 'nothing saved for this server yet';
+}
+
+async function saveProfile() {
+  const id = ui.server.value;
+  const body = {
+    nick: ui.nick.value.trim() || null,
+    saslUsername: ui.saslUser.value.trim() || null,
+    channels: splitChannels(ui.channels.value),
+    // null means leave the stored secret alone, which is what an untouched
+    // field should mean. Clearing it needs an explicit empty string.
+    password: ui.password.value === '' ? null : ui.password.value,
+    saslPassword: ui.saslPass.value === '' ? null : ui.saslPass.value,
+  };
+  try {
+    await api(`/api/servers/${encodeURIComponent(id)}/profile`, { method: 'PUT', body });
+    await loadProfile();
+  } catch (e) {
+    ui.profileState.textContent = `could not save: ${e.message}`;
+  }
 }
 
 function showNotes() {
@@ -74,6 +185,84 @@ function showNotes() {
   $('auth').open = server.sasl || server.registered;
   ui.saslUser.disabled = !server.sasl;
   ui.saslPass.disabled = !server.sasl;
+}
+
+// ------------------------------------------------------- server management
+
+function openServerDialog(server) {
+  editingServerId = server ? server.id : null;
+  $('server-dialog-title').textContent = server ? `Edit ${server.name}` : 'Add a server';
+  $('f-name').value = server ? server.name : '';
+  $('f-id').value = server ? server.id : '';
+  // The id is the key the profile hangs off, so changing it would orphan the
+  // credentials stored against it.
+  $('f-id').disabled = Boolean(server);
+  $('f-host').value = server ? server.host : '';
+  $('f-port').value = server ? server.port : 6697;
+  $('f-tls').checked = server ? server.tls : true;
+  $('f-sasl').checked = server ? server.sasl : false;
+  $('f-registered').checked = server ? server.registered : false;
+  $('f-exercises').value = server ? (server.exercises || []).join(', ') : '';
+  $('f-notes').value = server ? (server.notes || '') : '';
+  $('server-error').textContent = '';
+  ui.serverDialog.showModal();
+}
+
+async function saveServer() {
+  const body = {
+    id: $('f-id').value.trim() || null,
+    name: $('f-name').value.trim(),
+    host: $('f-host').value.trim(),
+    port: Number($('f-port').value),
+    tls: $('f-tls').checked,
+    sasl: $('f-sasl').checked,
+    registered: $('f-registered').checked,
+    exercises: $('f-exercises').value.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
+    notes: $('f-notes').value.trim() || null,
+  };
+  try {
+    const saved = editingServerId
+      ? await api(`/api/servers/${encodeURIComponent(editingServerId)}`, { method: 'PUT', body })
+      : await api('/api/servers', { method: 'POST', body });
+    ui.serverDialog.close();
+    await loadServers(saved.id);
+  } catch (e) {
+    $('server-error').textContent = e.message;
+  }
+}
+
+async function deleteServer() {
+  const server = servers.find((s) => s.id === ui.server.value);
+  if (!server) { return; }
+  // Deleting takes the stored credentials with it, which is not obvious from
+  // the button, so say it before doing it.
+  if (!window.confirm(
+      `Delete ${server.name}? Any saved nick, channels and passwords for it go too.`)) {
+    return;
+  }
+  try {
+    await api(`/api/servers/${encodeURIComponent(server.id)}`, { method: 'DELETE' });
+    await loadMe();
+loadServers();
+  } catch (e) {
+    append(STATUS_BUFFER, 'error', null, `could not delete: ${e.message}`);
+  }
+}
+
+async function changePassword() {
+  try {
+    await api('/api/me/password', {
+      method: 'POST',
+      body: { currentPassword: $('p-current').value, newPassword: $('p-new').value },
+    });
+    ui.passwordDialog.close();
+    $('p-current').value = '';
+    $('p-new').value = '';
+    await loadMe();
+    append(STATUS_BUFFER, 'system', null, 'password changed');
+  } catch (e) {
+    $('password-error').textContent = e.message;
+  }
 }
 
 // -------------------------------------------------------------------- socket
@@ -499,7 +688,20 @@ function cssEscape(value) {
 
 $('connect').addEventListener('submit', connect);
 ui.stop.addEventListener('click', disconnect);
-ui.server.addEventListener('change', showNotes);
+ui.server.addEventListener('change', () => { showNotes(); loadProfile(); });
+ui.saveProfile.addEventListener('click', saveProfile);
+$('add-server').addEventListener('click', () => openServerDialog(null));
+$('edit-server').addEventListener('click',
+  () => openServerDialog(servers.find((s) => s.id === ui.server.value)));
+$('delete-server').addEventListener('click', deleteServer);
+$('server-save').addEventListener('click', saveServer);
+$('server-cancel').addEventListener('click', () => ui.serverDialog.close());
+$('change-password').addEventListener('click', () => {
+  $('password-error').textContent = '';
+  ui.passwordDialog.showModal();
+});
+$('password-save').addEventListener('click', changePassword);
+$('password-cancel').addEventListener('click', () => ui.passwordDialog.close());
 $('say').addEventListener('submit', say);
 document.addEventListener('click', closeUserMenu);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeUserMenu(); } });
@@ -508,4 +710,5 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { closeUse
 renderTabs([]);
 select(STATUS_BUFFER);
 
+loadMe();
 loadServers();

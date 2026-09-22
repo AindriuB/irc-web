@@ -17,10 +17,12 @@ import org.springframework.web.socket.handler.TextWebSocketHandler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.github.aindriub.ircweb.irc.ClientCommand;
+import io.github.aindriub.ircweb.irc.ConnectRequest;
+import io.github.aindriub.ircweb.irc.DirectoryService;
 import io.github.aindriub.ircweb.irc.IrcServer;
 import io.github.aindriub.ircweb.irc.IrcSession;
 import io.github.aindriub.ircweb.irc.OutboundEvent;
-import io.github.aindriub.ircweb.irc.ServerDirectory;
+import io.github.aindriub.ircweb.irc.ServerProfile;
 
 /**
  * Bridges one browser socket to one IRC connection.
@@ -37,7 +39,7 @@ public class IrcWebSocketHandler extends TextWebSocketHandler {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(IrcWebSocketHandler.class);
 
-    private final ServerDirectory directory;
+    private final DirectoryService directory;
     private final ObjectMapper json;
 
     private final Map<String, Bridge> bridges = new ConcurrentHashMap<>();
@@ -47,7 +49,7 @@ public class IrcWebSocketHandler extends TextWebSocketHandler {
         return thread;
     });
 
-    public IrcWebSocketHandler(ServerDirectory directory, ObjectMapper json) {
+    public IrcWebSocketHandler(DirectoryService directory, ObjectMapper json) {
         this.directory = directory;
         this.json = json;
     }
@@ -123,7 +125,31 @@ public class IrcWebSocketHandler extends TextWebSocketHandler {
             IrcServer server = directory.byId(command.serverId())
                     .orElseThrow(() -> new IllegalArgumentException(
                             "no such server: " + command.serverId()));
-            irc.connect(server, command.toConnectRequest());
+            irc.connect(server, withStoredDetails(command));
+        }
+
+        /**
+         * The browser sends what was typed; anything it left blank comes from the
+         * stored profile. Passwords in particular are never sent to the browser, so
+         * they can only come from here.
+         */
+        private ConnectRequest withStoredDetails(ClientCommand command) {
+            ConnectRequest typed = command.toConnectRequest();
+            ServerProfile profile = directory.profile(command.serverId());
+            DirectoryService.Credentials stored = directory.credentials(command.serverId());
+
+            return new ConnectRequest(
+                    typed.serverId(),
+                    firstSet(typed.nick(), profile.nick()),
+                    firstSet(typed.password(), stored.password()),
+                    firstSet(typed.saslUsername(), stored.saslUsername()),
+                    firstSet(typed.saslPassword(), stored.saslPassword()),
+                    typed.channels() == null || typed.channels().isEmpty()
+                            ? profile.channels() : typed.channels());
+        }
+
+        private String firstSet(String typed, String stored) {
+            return typed != null && !typed.isBlank() ? typed : stored;
         }
 
         private void send(OutboundEvent event) {

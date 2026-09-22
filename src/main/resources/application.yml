@@ -2,17 +2,35 @@ spring:
   application:
     name: irc-web
   config:
-    # The server directory is its own file: it is data that changes for reasons
-    # unrelated to the application's settings, and it is the thing most likely
-    # to be edited by whoever is testing.
+    # The server directory seeds an empty database and is then left alone, so
+    # edits made in the UI survive a restart. See DirectoryService.
     import: classpath:config/servers.yml
+
+  datasource:
+    # File mode, in the data directory, so the directory and its credentials
+    # outlive the process without needing a database server stood up beside it.
+    url: jdbc:h2:file:${irc-web.data-dir:./data}/irc-web;DB_CLOSE_DELAY=-1;AUTO_SERVER=TRUE
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+irc-web:
+  data-dir: ${IRC_WEB_DATA_DIR:./data}
+  # Encrypts the stored IRC and SASL passwords. Generated into the data
+  # directory on first start when unset, so the default path still encrypts
+  # rather than silently storing plaintext.
+  secret-key: ${IRC_WEB_SECRET_KEY:}
+  admin-username: ${IRC_WEB_ADMIN_USERNAME:admin}
+  # Generated and logged once when unset.
+  admin-password: ${IRC_WEB_ADMIN_PASSWORD:}
 
 server:
   port: 8081
 
 logging:
   level:
-    # The library's own logging is half the value of a test harness. Debug shows
-    # the registration handshake, rate limiting decisions and reconnect attempts.
     io.github.aindriub.irc.client: DEBUG
     io.github.aindriub.ircweb: DEBUG

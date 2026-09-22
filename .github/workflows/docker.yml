@@ -65,14 +65,14 @@ jobs:
           docker run -d --name probe -p 8081:8081 \
             $(echo "${{ steps.meta.outputs.tags }}" | head -1)
           for i in $(seq 1 30); do
-            if curl -sf -o /dev/null http://127.0.0.1:8081/api/servers; then
-              echo "image serves the server directory"
+            if curl -sf -o /dev/null http://127.0.0.1:8081/health; then
+              echo "image is healthy and its configuration loaded"
               docker rm -f probe
               exit 0
             fi
             sleep 2
           done
-          echo "::error::image did not serve /api/servers within 60s"
+          echo "::error::image did not serve /health within 60s"
           docker logs probe
           docker rm -f probe
           exit 1

@@ -12,7 +12,12 @@
   <h1>irc-web</h1>
   <span id="state" class="state idle">idle</span>
   <span class="grow"></span>
-  <span id="wire-hint" class="hint">wire traffic is a tab</span>
+  <span id="password-nag" class="nag" hidden>generated password still in use</span>
+  <span id="who" class="hint"></span>
+  <button id="change-password" type="button" class="ghost small">password</button>
+  <form method="post" action="/api/logout" id="logout-form">
+    <button type="submit" class="ghost small">sign out</button>
+  </form>
 </header>
 
 <main>
@@ -21,6 +26,11 @@
       <label>Server
         <select id="server" required></select>
       </label>
+      <div class="server-actions">
+        <button id="add-server" type="button" class="ghost small">add</button>
+        <button id="edit-server" type="button" class="ghost small">edit</button>
+        <button id="delete-server" type="button" class="ghost small">delete</button>
+      </div>
       <p id="server-notes" class="notes"></p>
 
       <label>Nick
@@ -51,6 +61,8 @@
         <button id="go" type="submit">Connect</button>
         <button id="stop" type="button" class="ghost" disabled>Disconnect</button>
       </div>
+      <button id="save-profile" type="button" class="ghost wide">Remember these details</button>
+      <p id="profile-state" class="notes"></p>
     </form>
 
     <section id="channels-list">
@@ -76,6 +88,71 @@
 </main>
 
 <div id="user-menu" class="menu" hidden role="menu"></div>
+
+<dialog id="server-dialog">
+  <form id="server-form" method="dialog">
+    <h2 id="server-dialog-title">Add a server</h2>
+
+    <div class="row">
+      <label>Name
+        <input id="f-name" required autocomplete="off">
+      </label>
+      <label class="narrow">Id
+        <input id="f-id" autocomplete="off" spellcheck="false"
+               placeholder="from name">
+      </label>
+    </div>
+
+    <div class="row">
+      <label>Host
+        <input id="f-host" required autocomplete="off" spellcheck="false">
+      </label>
+      <label class="narrow">Port
+        <input id="f-port" type="number" min="1" max="65535" value="6697" required>
+      </label>
+    </div>
+
+    <div class="checks">
+      <label class="check"><input id="f-tls" type="checkbox" checked> TLS</label>
+      <label class="check"><input id="f-sasl" type="checkbox"> supports SASL</label>
+      <label class="check"><input id="f-registered" type="checkbox"> needs an account</label>
+    </div>
+
+    <label>Exercises
+      <input id="f-exercises" autocomplete="off"
+             placeholder="tls, sasl, isupport">
+    </label>
+
+    <label>Notes
+      <textarea id="f-notes" rows="4"
+                placeholder="what this one is good for proving, and anything that would otherwise be rediscovered the hard way"></textarea>
+    </label>
+
+    <p id="server-error" class="error-text"></p>
+
+    <menu>
+      <button type="button" id="server-cancel" class="ghost">Cancel</button>
+      <button type="button" id="server-save">Save</button>
+    </menu>
+  </form>
+</dialog>
+
+<dialog id="password-dialog">
+  <form id="password-form" method="dialog">
+    <h2>Change password</h2>
+    <label>Current password
+      <input id="p-current" type="password" autocomplete="current-password" required>
+    </label>
+    <label>New password
+      <input id="p-new" type="password" autocomplete="new-password" required minlength="8">
+    </label>
+    <p id="password-error" class="error-text"></p>
+    <menu>
+      <button type="button" id="password-cancel" class="ghost">Cancel</button>
+      <button type="button" id="password-save">Change</button>
+    </menu>
+  </form>
+</dialog>
 
 <script src="app.js"></script>
 </body>

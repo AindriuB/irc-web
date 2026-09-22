@@ -25,13 +25,21 @@ WORKDIR /app
 COPY --from=build /build/target/irc-web-*.jar app.jar
 COPY LICENSE NOTICE ./
 
+# The database, the profiles and the encryption key live here. Created before
+# dropping privileges so the app can write to it whether or not a volume is
+# mounted over the top.
+RUN mkdir -p /data && chown app:app /data
+VOLUME ["/data"]
+ENV IRC_WEB_DATA_DIR=/data
+
 USER app
 EXPOSE 8081
 
-# wget is in busybox, so this costs nothing extra. /api/servers is a better
-# probe than / because it proves the configuration loaded, not merely that
-# Tomcat is answering.
+# wget is in busybox, so this costs nothing extra. /health rather than / because
+# it proves the configuration loaded rather than merely that Tomcat is
+# answering, and rather than /api/servers because that needs credentials a
+# probe has no business holding.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
-    CMD wget -q -O /dev/null http://127.0.0.1:8081/api/servers || exit 1
+    CMD wget -q -O /dev/null http://127.0.0.1:8081/health || exit 1
 
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "app.jar"]

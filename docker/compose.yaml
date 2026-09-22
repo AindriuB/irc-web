@@ -29,6 +29,18 @@ services:
       # Inside the compose network the local server is reachable by service
       # name. Loopback here would be this container, which runs no IRC server.
       LOCAL_IRC_HOST: ergo
+      IRC_WEB_DATA_DIR: /data
+      # Set these to choose the first account rather than having one generated
+      # and printed to the log. The key encrypts the stored IRC passwords;
+      # without it one is generated into /data, which is fine until the volume
+      # is copied somewhere the key is not.
+      IRC_WEB_ADMIN_USERNAME: ${IRC_WEB_ADMIN_USERNAME:-admin}
+      IRC_WEB_ADMIN_PASSWORD: ${IRC_WEB_ADMIN_PASSWORD:-}
+      IRC_WEB_SECRET_KEY: ${IRC_WEB_SECRET_KEY:-}
+    volumes:
+      # The directory, the profiles and the encryption key live here. Without
+      # this the stored servers and credentials vanish on every recreate.
+      - irc-web-data:/data
     ports:
       # Bound to all interfaces deliberately: the point of running it this way
       # is to reach it from another machine. It has no authentication, so keep
@@ -54,3 +66,4 @@ services:
 
 volumes:
   ergo-data:
+  irc-web-data:

@@ -21,6 +21,8 @@ import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
+import org.springframework.http.HttpHeaders;
+import org.springframework.web.socket.WebSocketHttpHeaders;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,7 +35,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
  * fails when that is not running, so the suite stays useful on a machine that has
  * not started it - but note what that means: a skipped test has proved nothing.
  */
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+        properties = {
+            // A known password, because the test has to log in like a browser
+            // does: the websocket handshake is an authenticated request.
+            "irc-web.admin-username=tester",
+            "irc-web.admin-password=test-password",
+            // Its own database and key, so a run never inherits or disturbs the
+            // data directory of a copy someone is using.
+            "irc-web.data-dir=${java.io.tmpdir}/irc-web-it",
+            "spring.datasource.url=jdbc:h2:mem:irc-web-it;DB_CLOSE_DELAY=-1"
+        })
 class LocalIrcServerIT {
 
     private static final String IRC_HOST = "127.0.0.1";
@@ -101,9 +113,7 @@ class LocalIrcServerIT {
         WebSocketSession other = null;
         try {
             Collector speakerEvents = new Collector();
-            other = new StandardWebSocketClient()
-                    .execute(speakerEvents, "ws://localhost:" + port + "/ws/irc")
-                    .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            other = connect(speakerEvents);
             other.sendMessage(new TextMessage(connectCommand("webtest4", "#irc-web-room")));
             speakerEvents.await(e -> "status".equals(text(e, "type"))
                     && "ready".equals(text(e, "state")));
@@ -141,10 +151,23 @@ class LocalIrcServerIT {
 
     private Collector open() throws Exception {
         Collector collector = new Collector();
-        socket = new StandardWebSocketClient()
-                .execute(collector, "ws://localhost:" + port + "/ws/irc")
-                .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+        socket = connect(collector);
         return collector;
+    }
+
+    /**
+     * The handshake is an ordinary authenticated request, so it carries basic
+     * credentials. A browser uses its session cookie; either satisfies the filter
+     * chain, and basic is far less to set up from a test.
+     */
+    private WebSocketSession connect(Collector collector) throws Exception {
+        WebSocketHttpHeaders headers = new WebSocketHttpHeaders();
+        headers.add(HttpHeaders.AUTHORIZATION, "Basic " + java.util.Base64.getEncoder()
+                .encodeToString("tester:test-password".getBytes()));
+        return new StandardWebSocketClient()
+                .execute(collector, headers, java.net.URI.create(
+                        "ws://localhost:" + port + "/ws/irc"))
+                .get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
     }
 
     private void send(String payload) throws IOException {

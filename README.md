@@ -116,13 +116,44 @@ member lists, a message travelling between two browser sessions through the IRC
 server, and raw lines reaching the browser. It **skips** rather than fails when the
 container is not running — worth remembering that a skipped test has proved nothing.
 
+## Signing in
+
+On first start an account is created. Set `IRC_WEB_ADMIN_USERNAME` and
+`IRC_WEB_ADMIN_PASSWORD` to choose it; leave them unset and a password is generated
+and printed to the log **once**:
+
+```bash
+docker compose -f docker/compose.yaml logs irc-web | grep -A4 'has been generated'
+```
+
+The header nags until a generated password is changed, because one that was printed
+once and never changed is how these end up effectively unauthenticated.
+
+## What is stored, and how
+
+The directory and a profile per server live in an H2 file under the data directory:
+nick, channels, SASL account, and the two passwords. `servers.yml` **seeds an empty
+database** and is then left alone — re-reading it on every start would silently undo
+every edit made in the UI.
+
+Passwords are encrypted at rest with AES-GCM. The key comes from
+`IRC_WEB_SECRET_KEY`, or is generated into the data directory on first start so the
+default path still encrypts rather than quietly storing plaintext. Back it up with
+the database; without it the stored passwords cannot be read back, which is an
+inconvenience rather than a loss since they can be entered again.
+
+**The API never returns a stored password** — only whether one is set. This
+application holds credentials for other people's networks, and a readable-back
+password is one forgotten firewall rule from being someone else's. An untouched
+password field leaves what is stored alone; an empty one clears it.
+
 ## Licence
 
 Apache License 2.0. See [LICENSE](LICENSE).
 
-This is a test harness, not a product: **there is no authentication.** Anyone who can
-reach the port can connect to any network in the directory under any nick, and the
-wire buffer sends raw IRC commands. Keep it on a trusted network.
+Still worth saying plainly: this is a test harness. Anyone who signs in can connect
+to any network in the directory and send raw IRC commands from your address. Keep it
+on a network you trust.
 
 ## Depending on irc-client
 
