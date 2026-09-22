@@ -11,6 +11,9 @@ import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
 
 const STATIC = new URL('../../main/resources/static/', import.meta.url);
+
+/** Declared once in app.js; asserted against that list at the bottom of this file. */
+const COMMAND_COUNT = 10;
 const source = readFileSync(new URL('app.js', STATIC), 'utf8');
 
 function page() {
@@ -24,7 +27,25 @@ function page() {
     json: async () => (path === '/api/me' ? { username: 'tester' } : []),
   });
   window.WebSocket = class { addEventListener() {} send() {} close() {} };
-  window.eval(source);
+
+  // Evaluated with the source rather than after it. Each window.eval gets its
+  // own lexical scope, so a second call cannot see the app's `const` state at
+  // all; this closes over it instead. Nothing in app.js knows about it.
+  window.eval(`${source}
+    ;window.__app = {
+      asAction,
+      join(channel, nick, members) {
+        active = channel;
+        myNick = nick;
+        memberLists.set(channel, members);
+      },
+      capture() {
+        const sent = [];
+        send = (command) => sent.push(command);
+        return sent;
+      },
+      receive(event) { handle(event); },
+    };`);
 
   const input = window.document.getElementById('input');
   const menu = window.document.getElementById('completions');
@@ -32,6 +53,23 @@ function page() {
   return {
     input,
     menu,
+    window,
+    app: window.__app,
+    /** Puts the page in a channel with people in it. */
+    inChannel(members) {
+      window.__app.join('#test', 'tester', members);
+    },
+    /** A line from the server, as the socket would deliver it. */
+    receive(state, detail) { window.__app.receive({ type: 'server', state, detail }); },
+    /** Every line currently in the visible buffer. */
+    lines() {
+      return [...window.document.querySelectorAll('#log li')]
+          .map((li) => li.querySelector('.body').textContent);
+    },
+    submit() {
+      window.document.getElementById('say')
+          .dispatchEvent(new window.Event('submit', { cancelable: true }));
+    },
     type(value, caret = value.length) {
       input.value = value;
       input.setSelectionRange(caret, caret);
@@ -65,7 +103,7 @@ test('ordinary text is left alone', () => {
 test('a bare slash offers every command', () => {
   const ui = page();
   ui.type('/');
-  assert.equal(ui.offered().length, 6);
+  assert.equal(ui.offered().length, COMMAND_COUNT);
 });
 
 test('typing narrows the list', () => {
@@ -160,4 +198,171 @@ test('nothing is offered that the dispatcher cannot run', () => {
   // Both come from the same table, so this asserts that it stayed that way.
   const declared = [...source.matchAll(/^\s*name: '([a-z]+)',$/gm)].map((m) => m[1]);
   assert.deepEqual(ui.offered().map((name) => name.slice(1)), declared);
+});
+
+// ------------------------------------------------------------ nick completion
+
+const CHANNEL = [
+  { nick: 'alice', prefix: '@', operator: true },
+  { nick: 'alan', prefix: '', operator: false },
+  { nick: 'bob', prefix: '', operator: false },
+  { nick: 'tester', prefix: '', operator: false },
+];
+
+test('a word that is not a command completes against who is here', () => {
+  const ui = page();
+  ui.inChannel(CHANNEL);
+  ui.type('al');
+  assert.deepEqual(ui.offered(), ['alice', 'alan']);
+});
+
+test('your own nick is not offered', () => {
+  const ui = page();
+  ui.inChannel(CHANNEL);
+  ui.type('tes');
+  assert.equal(ui.offered(), null, 'completing your own nick helps nobody');
+});
+
+test('nobody is offered outside a channel', () => {
+  const ui = page();
+  ui.type('al');
+  assert.equal(ui.offered(), null);
+});
+
+test('a nick at the start of a line is addressed with a colon', () => {
+  const ui = page();
+  ui.inChannel(CHANNEL);
+  ui.type('ali');
+  ui.key('Tab');
+  assert.equal(ui.input.value, 'alice: ', 'the convention other clients highlight on');
+});
+
+test('a nick in the middle of a sentence is just the nick', () => {
+  const ui = page();
+  ui.inChannel(CHANNEL);
+  ui.type('ask ali');
+  ui.key('Tab');
+  assert.equal(ui.input.value, 'ask alice ');
+});
+
+test('completing a nick leaves the rest of the line alone', () => {
+  const ui = page();
+  ui.inChannel(CHANNEL);
+  ui.type('ask ali about it', 7);
+  ui.key('Tab');
+
+  // One space, not two: the completion brings its own and there was already
+  // one there.
+  assert.equal(ui.input.value, 'ask alice about it');
+});
+
+test('Enter never completes a nick', () => {
+  const ui = page();
+  ui.inChannel(CHANNEL);
+  ui.type('hey al');
+
+  // The whole message would change under someone mid-sentence otherwise:
+  // "hey al" and a return would send "hey alice".
+  assert.equal(ui.key('Enter'), false, 'Enter has to send');
+  assert.equal(ui.input.value, 'hey al');
+});
+
+test('Tab still completes commands when a channel is open', () => {
+  const ui = page();
+  ui.inChannel(CHANNEL);
+  ui.type('/j');
+  ui.key('Tab');
+  assert.equal(ui.input.value, '/join ');
+});
+
+// -------------------------------------------------------------------- actions
+
+test('an incoming action is recognised and unwrapped', () => {
+  const { asAction } = page().app;
+
+  assert.equal(asAction('\u0001ACTION waves\u0001'), 'waves');
+  assert.equal(asAction('\u0001ACTION waves'), 'waves',
+      'the closing marker is optional, and not every client sends it');
+  assert.equal(asAction('an ordinary message'), null);
+  assert.equal(asAction(null), null);
+});
+
+test('/me renders as an action rather than control characters', () => {
+  const ui = page();
+  ui.inChannel(CHANNEL);
+  const sent = ui.app.capture();
+
+  ui.type('/me waves');
+  ui.submit();
+
+  const [command] = sent;
+  assert.equal(command.type, 'message');
+  assert.equal(command.target, '#test');
+  assert.equal(command.text, '\u0001ACTION waves\u0001');
+
+  const line = ui.window.document.querySelector('#log li.action');
+  assert.ok(line, 'the action should have been echoed into the log');
+  assert.equal(line.querySelector('.body').textContent, 'waves',
+      'the markers belong on the wire, not on the screen');
+});
+
+// ------------------------------------------------------------- channel lists
+
+/** A LIST reply, deliberately not in size order. */
+function listReply(ui, channels) {
+  ui.receive('321', 'Channel :Users  Name');
+  for (const [channel, users, topic] of channels) {
+    ui.receive('322', `${channel} ${users} ${topic}`);
+  }
+  ui.receive('323', ':End of /LIST');
+}
+
+test('a channel list comes back busiest first', () => {
+  const ui = page();
+  listReply(ui, [['#small', 3, 'a quiet corner'], ['#huge', 900, 'everyone'],
+                 ['#middle', 40, 'some people']]);
+
+  const channels = ui.lines().filter((line) => line.startsWith('#'))
+      .map((line) => line.split(' ')[0]);
+  assert.deepEqual(channels, ['#huge', '#middle', '#small']);
+});
+
+test('the list says how many channels there were', () => {
+  const ui = page();
+  listReply(ui, [['#a', 1, 'x'], ['#b', 2, 'y']]);
+  assert.ok(ui.lines().some((line) => line.includes('2 channels')));
+});
+
+test('channels of the same size keep a stable order', () => {
+  const ui = page();
+  listReply(ui, [['#zulu', 5, ''], ['#alpha', 5, '']]);
+
+  const channels = ui.lines().filter((line) => line.startsWith('#'))
+      .map((line) => line.split(' ')[0]);
+  assert.deepEqual(channels, ['#alpha', '#zulu'],
+      'alphabetical among equals, rather than whatever order the server sent');
+});
+
+test('a huge list is cut to the busiest rather than filling the buffer', () => {
+  const ui = page();
+  const many = Array.from({ length: 250 }, (unused, i) => [`#c${i}`, i, '']);
+  listReply(ui, many);
+
+  const channels = ui.lines().filter((line) => line.startsWith('#'));
+  assert.equal(channels.length, 100);
+  assert.ok(channels[0].startsWith('#c249'), 'the busiest should survive the cut');
+  assert.ok(ui.lines().some((line) => line.includes('250 channels')),
+      'and it should still say what was left out');
+});
+
+test('an empty list says so rather than showing nothing', () => {
+  const ui = page();
+  listReply(ui, []);
+  assert.ok(ui.lines().some((line) => line.includes('no channels listed')));
+});
+
+test('an ordinary numeric is still shown as it arrives', () => {
+  const ui = page();
+  ui.receive('331', '#test :No topic is set');
+  assert.ok(ui.lines().some((line) => line.includes('No topic is set')));
 });

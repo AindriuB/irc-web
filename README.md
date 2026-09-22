@@ -39,11 +39,23 @@ Published images are at `ghcr.io/aindriub/irc-web`.
 
 The first page you get is setup: choose a username and a password, and that account
 is the one everything else lives behind. Then pick a network, choose a nick, and
-connect. Typing `/` in the message box lists the commands with their arguments —
-**Tab** or **Enter** completes one, the arrows move through them, **Esc** dismisses
-them. A command typed in full and sent with Enter goes as it always did. A **wire
-traffic** buffer shows every line the server sent, for when a network does something
-you would otherwise have to guess at.
+connect.
+
+Typing `/` in the message box lists the commands — `/join`, `/part`, `/msg`,
+`/query`, `/whois`, `/me`, `/nick`, `/topic`, `/list` and `/raw` — with their
+arguments and what they do. Typing anything else completes **nicks** from the
+channel, addressed as `nick: ` at the start of a line and plain in the middle of a
+sentence. **Tab** completes, the arrows move through the list, **Esc** dismisses it.
+
+Enter completes an unfinished *command*, and never a nick: taking Enter mid-sentence
+would mean typing `hey al` and sending `hey alice`.
+
+`/list` sorts by how many people are in each channel and shows the hundred busiest,
+because a network's own order is thousands of lines with the dead channels mixed in.
+It works the same through `/raw LIST`.
+
+A **wire traffic** buffer shows every line the server sent, for when a network does
+something you would otherwise have to guess at.
 
 ## The server directory
 

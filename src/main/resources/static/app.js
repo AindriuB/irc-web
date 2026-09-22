@@ -85,6 +85,9 @@ let servers = [];
 let active = null;              // the channel currently being viewed
 let myNick = null;              // as the server gave it, not as it was asked for
 const buffers = new Map();      // target -> [{kind, sender, text, at}]
+
+/** CTCP wraps its payload in this. An ACTION is the only one handled here. */
+const CTCP = '\u0001';
 const unread = new Map();       // target -> {count, mention}
 const queries = new Set();      // one-to-one conversations, which the server never lists
 const memberLists = new Map();  // channel -> [{nick, prefix, operator}]
@@ -309,9 +312,16 @@ function handle(event) {
       if (event.detail) { append(STATUS_BUFFER, 'system', null, event.detail); }
       break;
 
-    case 'message':
-      append(bufferFor(event), event.self ? 'self' : 'message', event.sender, event.text);
+    case 'message': {
+      // An action arrives as an ordinary message wrapped in CTCP markers. Left
+      // alone it renders as literal control characters around the word ACTION.
+      const action = asAction(event.text);
+      append(bufferFor(event),
+        action !== null ? 'action' : (event.self ? 'self' : 'message'),
+        event.sender,
+        action !== null ? action : event.text);
       break;
+    }
 
     case 'notice':
       append(isChannelName(event.target) ? event.target : STATUS_BUFFER,
@@ -319,6 +329,17 @@ function handle(event) {
       break;
 
     case 'server':
+      // A LIST arrives as one line per channel in whatever order the server
+      // keeps them, which on a big network is thousands of lines nobody can
+      // read. Collected between 321 and 323, then shown busiest first.
+      if (event.state === '321') { listing = []; break; }
+      if (event.state === '322') {
+        if (!listing) { listing = []; }
+        listing.push(parseListing(event.detail));
+        break;
+      }
+      if (event.state === '323') { showListing(); break; }
+
       append(STATUS_BUFFER, 'server', event.state, event.detail);
       break;
 
@@ -393,9 +414,69 @@ function setState(state, detail) {
 
 // Wire traffic would light up permanently and so would mean nothing, and joins
 // and parts are noise rather than something waiting to be read.
-const BADGED = new Set(['message', 'notice']);
+const BADGED = new Set(['message', 'notice', 'action']);
+
+/**
+ * How many channels a listing shows. A network with forty thousand channels
+ * would otherwise push everything else out of the buffer, and the tail of that
+ * list is empty channels nobody wants.
+ */
+const LISTING_SHOWN = 100;
+
+let listing = null;   // rows arriving between 321 and 323, or null
+
+/** One RPL_LIST reply: "#channel 42 some topic". */
+function parseListing(detail) {
+  const match = /^(\S+) (\d+) ?([\s\S]*)$/.exec(detail || '');
+  return match
+    ? { channel: match[1], users: Number(match[2]), topic: match[3] }
+    : null;
+}
+
+function showListing() {
+  const rows = (listing || []).filter(Boolean);
+  listing = null;
+
+  if (!rows.length) {
+    append(STATUS_BUFFER, 'system', null, 'no channels listed');
+    return;
+  }
+
+  // Busiest first, and alphabetical among equals so the order is stable rather
+  // than whatever the server happened to send.
+  rows.sort((a, b) => b.users - a.users || a.channel.localeCompare(b.channel));
+  const shown = rows.slice(0, LISTING_SHOWN);
+  const width = Math.max(...shown.map((row) => row.channel.length));
+
+  push(STATUS_BUFFER, 'system', null, shown.length < rows.length
+    ? `${rows.length} channels; the ${shown.length} busiest:`
+    : `${rows.length} channels, busiest first:`);
+  for (const row of shown) {
+    push(STATUS_BUFFER, 'listing', null,
+      `${row.channel.padEnd(width)}  ${String(row.users).padStart(5)}  ${row.topic}`);
+  }
+  settle(STATUS_BUFFER);
+  select(STATUS_BUFFER);
+}
+
+/** The text of a CTCP ACTION, or null for anything else. */
+function asAction(text) {
+  // The closing marker is optional because not every client sends it.
+  const match = new RegExp(`^${CTCP}ACTION ?([\\s\\S]*?)${CTCP}?$`).exec(text || '');
+  return match ? match[1] : null;
+}
 
 function append(target, kind, sender, text) {
+  push(target, kind, sender, text);
+  settle(target);
+}
+
+/**
+ * Adds a line without touching the DOM. A channel listing arrives as hundreds
+ * of lines at once, and rendering the whole buffer after each one is the
+ * difference between instant and visibly slow.
+ */
+function push(target, kind, sender, text) {
   if (!buffers.has(target)) { buffers.set(target, []); }
   const buffer = buffers.get(target);
   buffer.push({ kind, sender, text, at: new Date() });
@@ -409,7 +490,9 @@ function append(target, kind, sender, text) {
   // A busy channel will fill memory over a long session otherwise, and this is
   // meant to be left running.
   if (buffer.length > 2000) { buffer.splice(0, buffer.length - 2000); }
+}
 
+function settle(target) {
   if (!active) { select(target); }
   if (target === active) { renderLog(); }
   if (!ui.tabs.querySelector(`[data-target="${cssEscape(target)}"]`)) { addTab(target); }
@@ -436,6 +519,12 @@ function renderLog() {
     const time = document.createElement('time');
     time.textContent = entry.at.toTimeString().slice(0, 8);
     li.append(time);
+    if (entry.kind === 'action') {
+      const star = document.createElement('span');
+      star.className = 'arrow';
+      star.textContent = '*';
+      li.append(star);
+    }
     if (entry.kind === 'raw-in' || entry.kind === 'raw-out') {
       const arrow = document.createElement('span');
       arrow.className = 'arrow';
@@ -687,6 +776,60 @@ const COMMANDS = [
     },
   },
   {
+    name: 'me',
+    args: '<does something>',
+    help: 'send an action',
+    run: ({ argument }) => {
+      if (!isChannel(active)) {
+        append(STATUS_BUFFER, 'error', null, 'pick a channel or a person first');
+        return;
+      }
+      if (!argument) {
+        append(STATUS_BUFFER, 'error', null, 'usage: /me <does something>');
+        return;
+      }
+      // An action is an ordinary PRIVMSG wrapped in CTCP markers, so it goes
+      // the normal way and gets the same flood protection as anything else.
+      send({ type: 'message', target: active, text: `${CTCP}ACTION ${argument}${CTCP}` });
+      append(active, 'action', myNick, argument);
+    },
+  },
+  {
+    name: 'nick',
+    args: '<newnick>',
+    help: 'change your nick',
+    run: ({ rest }) => {
+      if (!rest[0]) {
+        append(STATUS_BUFFER, 'error', null, 'usage: /nick <newnick>');
+        return;
+      }
+      send({ type: 'raw', line: `NICK ${rest[0]}` });
+    },
+  },
+  {
+    name: 'topic',
+    args: '[text]',
+    help: "set this channel's topic, or show it",
+    run: ({ argument }) => {
+      if (!isChannelName(active)) {
+        append(STATUS_BUFFER, 'error', null, 'a topic belongs to a channel');
+        return;
+      }
+      // No argument asks the server rather than clearing it. Clearing a topic
+      // by accident is not something to make easy.
+      send({ type: 'raw', line: argument ? `TOPIC ${active} :${argument}` : `TOPIC ${active}` });
+    },
+  },
+  {
+    name: 'list',
+    args: '[pattern]',
+    help: 'list channels, busiest first',
+    run: ({ argument }) => {
+      send({ type: 'raw', line: argument ? `LIST ${argument}` : 'LIST' });
+      select(STATUS_BUFFER);
+    },
+  },
+  {
     name: 'raw',
     args: '<line>',
     help: 'send a line to the server exactly as typed',
@@ -731,29 +874,66 @@ let completions = [];
 let highlighted = 0;
 
 /**
- * The command word being typed, or null when the caret is somewhere a command
- * name cannot be. Past the first space the argument is being written, and
- * offering command names there would be noise.
+ * What is being completed, or null when nothing is.
+ *
+ * Two sources, chosen by where the caret is rather than by a mode: a slash at
+ * the very start means a command, and any other word means whoever is in the
+ * channel. `start` and `end` bound the word so accepting can replace exactly it
+ * and leave the rest of the line alone.
  */
-function commandWord() {
+function completionContext() {
   const value = ui.input.value;
-  if (!value.startsWith('/')) { return null; }
-
-  const space = value.indexOf(' ');
   const caret = ui.input.selectionStart ?? value.length;
-  if (space !== -1 && caret > space) { return null; }
+  const space = value.indexOf(' ');
 
-  return (space === -1 ? value : value.slice(0, space)).slice(1).toLowerCase();
+  if (value.startsWith('/') && (space === -1 || caret <= space)) {
+    const end = space === -1 ? value.length : space;
+    return { kind: 'command', word: value.slice(1, end).toLowerCase(), start: 0, end };
+  }
+
+  const start = value.lastIndexOf(' ', caret - 1) + 1;
+  const word = value.slice(start, caret);
+  return word ? { kind: 'nick', word: word.toLowerCase(), start, end: caret } : null;
+}
+
+function candidates(context) {
+  if (context.kind === 'command') {
+    return COMMANDS
+      .filter((command) => command.name.startsWith(context.word))
+      .map((command) => ({
+        word: command.name,
+        name: `/${command.name}`,
+        args: command.args,
+        help: command.help,
+        // The trailing space is the point: the next thing typed is an argument.
+        insert: `/${command.name} `,
+      }));
+  }
+
+  return (memberLists.get(active) || [])
+    // Completing your own nick is not something anyone wants.
+    .filter((member) => member.nick !== myNick
+        && member.nick.toLowerCase().startsWith(context.word))
+    .map((member) => ({
+      word: member.nick.toLowerCase(),
+      name: member.nick,
+      args: member.prefix || '',
+      help: member.operator ? 'operator' : '',
+      // Addressing someone at the start of a line is written "nick: " by
+      // convention, and clients highlight on it.
+      insert: context.start === 0 ? `${member.nick}: ` : `${member.nick} `,
+    }));
 }
 
 function refreshCompletions() {
-  const word = commandWord();
-  if (word === null) { hideCompletions(); return; }
+  const context = completionContext();
+  if (!context) { hideCompletions(); return; }
 
-  completions = COMMANDS.filter((c) => c.name.startsWith(word));
-  // An exact and only match has nothing left to suggest: the menu would just
-  // sit there restating what has already been typed.
-  if (!completions.length || (completions.length === 1 && completions[0].name === word)) {
+  completions = candidates(context);
+  // A word that is already the only thing it could be has nothing left to
+  // suggest, and a menu restating it would just sit in the way.
+  if (!completions.length
+      || (completions.length === 1 && completions[0].word === context.word)) {
     hideCompletions();
     return;
   }
@@ -763,30 +943,33 @@ function refreshCompletions() {
 }
 
 function renderCompletions() {
-  ui.completions.innerHTML = '';
-  completions.forEach((command, index) => {
+  ui.completions.replaceChildren(...completions.map((candidate, index) => {
     const item = document.createElement('li');
     item.className = 'completion' + (index === highlighted ? ' on' : '');
-    item.innerHTML =
-      `<span class="c-name">/${command.name}</span>` +
-      `<span class="c-args"></span><span class="c-help"></span>`;
-    item.querySelector('.c-args').textContent = command.args;
-    item.querySelector('.c-help').textContent = command.help;
-    // mousedown, not click: the input blurs first on click and the menu would
+
+    for (const [className, text] of
+        [['c-name', candidate.name], ['c-args', candidate.args], ['c-help', candidate.help]]) {
+      const span = document.createElement('span');
+      span.className = className;
+      span.textContent = text;
+      item.append(span);
+    }
+
+    // mousedown, not click: the input blurs first on a click and the menu would
     // already be gone by the time the handler ran.
     item.addEventListener('mousedown', (event) => {
       event.preventDefault();
-      accept(command);
+      accept(candidate);
     });
-    ui.completions.append(item);
-  });
+    return item;
+  }));
   ui.completions.hidden = false;
 }
 
 function hideCompletions() {
   completions = [];
   ui.completions.hidden = true;
-  ui.completions.innerHTML = '';
+  ui.completions.replaceChildren();
 }
 
 function move(by) {
@@ -794,14 +977,17 @@ function move(by) {
   renderCompletions();
 }
 
-/** Replaces the command word, keeps whatever was already typed after it. */
-function accept(command) {
-  const value = ui.input.value;
-  const space = value.indexOf(' ');
-  const remainder = space === -1 ? '' : value.slice(space + 1);
+/** Replaces the word being completed, leaving everything around it alone. */
+function accept(candidate) {
+  const context = completionContext();
+  if (!context) { hideCompletions(); return; }
 
-  ui.input.value = `/${command.name} ${remainder}`;
-  const caret = command.name.length + 2;
+  const value = ui.input.value;
+  // The insert ends in a space; if one is already there, do not leave two.
+  const after = value.slice(context.end).replace(/^ /, '');
+  ui.input.value = value.slice(0, context.start) + candidate.insert + after;
+
+  const caret = context.start + candidate.insert.length;
   ui.input.setSelectionRange(caret, caret);
   ui.input.focus();
   hideCompletions();
@@ -818,14 +1004,17 @@ function onInputKey(event) {
       event.preventDefault();
       accept(completions[highlighted]);
       return;
-    case 'Enter':
-      // Only when what is typed is not already a command in its own right, so
-      // Enter on something complete still sends rather than surprising anyone.
-      if (!COMMANDS_BY_NAME.has(commandWord())) {
+    case 'Enter': {
+      // Only ever for a command, and only one not yet typed in full. Taking
+      // Enter while someone is writing a message would mean "hey ali" and a
+      // return sent "hey alice" instead of what was typed and read back.
+      const context = completionContext();
+      if (context && context.kind === 'command' && !COMMANDS_BY_NAME.has(context.word)) {
         event.preventDefault();
         accept(completions[highlighted]);
       }
       return;
+    }
     default:
   }
 }
