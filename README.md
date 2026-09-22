@@ -32,6 +32,7 @@ edit to a list.
 | **OFTC** | a different ircd, so implementation-specific assumptions show up |
 | **IRCnet** | no services, no SASL — proves nothing depends on modern conveniences |
 | **EFnet** | no nick ownership, so collisions are ordinary; exercises nick retry |
+| **QuakeNet** | pings *during* registration; `PREFIX=(ov)@+`, `CASEMAPPING=rfc1459` |
 | **Rizon** | different `CHANMODES`/`PREFIX`, proving the mode parser reads ISUPPORT |
 | **Twitch** | IRCv3 tags, capabilities and real rate limits |
 

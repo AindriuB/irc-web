@@ -99,6 +99,29 @@ irc:
         than exceptional. That makes it a good place to exercise the
         ERR_NICKNAMEINUSE retry path against a server that means it.
 
+    - id: quakenet
+      name: QuakeNet
+      host: irc.quakenet.org
+      port: 6667
+      tls: false
+      sasl: false
+      registered: false
+      exercises: [registration, ping-during-registration, isupport, channels]
+      notes: >
+        The most awkward target here, which is what makes it worth having. It
+        sends a PING during registration and withholds RPL_WELCOME until it is
+        answered, so a client that only answers pings after it is registered
+        hangs on connect and never learns why. irc-client answers it because
+        PingHandler sits above RegistrationHandler in the pipeline; a hand
+        written probe against the same server hung until a PONG was added by
+        hand. Its ISUPPORT is also the least like everyone else's: snircd, an
+        ircu descendant, with PREFIX=(ov)@+ and no half operators at all, plus
+        CASEMAPPING=rfc1459 and CHANTYPES=#&. Good for proving the mode parser
+        reads the server rather than assuming defaults. Port 6697 is listed on
+        some QuakeNet servers but timed out from here in testing, so this entry
+        is plaintext; there is no SASL either - accounts are held by Q and
+        authenticated by messaging Q@CServe.quakenet.org.
+
     - id: rizon
       name: Rizon
       host: irc.rizon.net
