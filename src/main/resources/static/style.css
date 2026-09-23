@@ -41,9 +41,14 @@ header h1 { font-size: 15px; margin: 0; letter-spacing: 0.04em; }
 main { flex: 1; display: flex; min-height: 0; }
 
 aside, #centre { min-height: 0; }
-#left { width: 290px; border-right: 1px solid var(--line); padding: 14px; overflow-y: auto; background: var(--panel); }
-#right { width: 180px; border-left: 1px solid var(--line); padding: 14px; overflow-y: auto; background: var(--panel); }
-#centre { flex: 1; display: flex; flex-direction: column; }
+/* flex: none, or these absorb the negative space when the middle pane is wider
+   than the window and the sidebars collapse instead. They are fixed furniture. */
+#left { flex: none; width: 290px; border-right: 1px solid var(--line); padding: 14px; overflow-y: auto; background: var(--panel); }
+#right { flex: none; width: 180px; border-left: 1px solid var(--line); padding: 14px; overflow-y: auto; background: var(--panel); }
+/* min-width: 0 defeats the automatic minimum, which otherwise refuses to let
+   this pane be narrower than its widest unbreakable line. A channel listing is
+   exactly that, and it was squeezing the sidebars off the screen. */
+#centre { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
 h2 { font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--dim); margin: 0 0 8px; }
 
@@ -80,7 +85,9 @@ details summary { font-size: 11px; text-transform: uppercase; letter-spacing: 0.
 #log time { color: #4d5566; flex: none; }
 #log .who { color: var(--accent); flex: none; }
 #log .who::after { content: ':'; }
-#log .body { flex: 1; }
+/* Same automatic minimum, one level down: without this a long line sets the
+   row's minimum width instead of wrapping or ellipsising inside it. */
+#log .body { flex: 1; min-width: 0; }
 #log li.self .who { color: var(--good); }
 #log li.system .body { color: var(--dim); font-style: italic; }
 #log li.notice .body { color: var(--warn); }
@@ -122,7 +129,7 @@ details summary { font-size: 11px; text-transform: uppercase; letter-spacing: 0.
 #say button { width: auto; padding: 7px 18px; }
 
 #members { list-style: none; margin: 0; padding: 0; }
-#members li { padding: 2px 0; color: var(--dim); }
+#members li { padding: 2px 0; color: var(--dim); overflow-wrap: anywhere; }
 #members li.op { color: var(--good); }
 
 /* The wire buffer is read as a stream of protocol lines rather than as
