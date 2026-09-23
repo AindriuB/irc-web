@@ -11,10 +11,12 @@ than no plan.
 
 ## Now
 
-### Merge the remaining dependabot pull requests
-Seven are green (#1, #3, #4, #5, #6, #7, #8) — CI actions and base images. The
-Spring Boot 4 migration landed in #9.
-**Blocked by:** needs a human to merge.
+### Take irc-client 1.2.0
+Carries the TLS-refusal message fix (#39), the reconnect-throttle fix plus
+`ServerRefusedException` (#40), and whatever bot-facade additions land in that
+release.
+**Blocked by:** irc-client 1.2.0 not yet released (irc-web pins 1.1.0 in
+pom.xml).
 
 ## Next
 
