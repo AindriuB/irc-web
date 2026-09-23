@@ -16,11 +16,6 @@ Seven are green (#1, #3, #4, #5, #6, #7, #8) — CI actions and base images. The
 Spring Boot 4 migration landed in #9.
 **Blocked by:** needs a human to merge.
 
-### Take irc-client 1.1.0
-`pom.xml` pins `irc-client.version` at 1.0.0, so the bounded outbound queue and
-the message splitter are not actually in the running application.
-**Blocked by:** irc-client 1.1.0 is not released to Central yet.
-
 ## Next
 
 ### Persist the backlog
