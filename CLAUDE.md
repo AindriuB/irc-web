@@ -3,8 +3,8 @@
 <!-- HARD CAP: 50 lines. This file is a router, not a manual.
      If you are adding detail here, it belongs in docs/ instead. -->
 
-A self-hosted IRC client: Spring Boot 3.3.5 on Java 21, a browser front end of
-three dependency-free files, and [irc-client](https://github.com/AindriuB/irc-client)
+A self-hosted IRC client: Spring Boot 4 on Java 21, a browser front end of three
+dependency-free files, and [irc-client](https://github.com/AindriuB/irc-client)
 underneath. `mvn verify` builds and tests it at this level.
 
 ## Read on demand, not up front
@@ -30,6 +30,9 @@ Load exactly one of these when the task needs it. Do not preload the set.
   and a skipped test has proved nothing.
 - `cd src/test/js && npm ci && npm test` for the front end. `app.js` is a third
   of this application's behaviour and no Java test loads it.
+- Jackson is **3**: `tools.jackson.databind`, not `com.fasterxml`, and its
+  exceptions are unchecked. `TestRestTemplate` no longer exists — tests use
+  `TestHttp`, a `RestTemplate` configured the three ways they relied on.
 
 ## Rules that hold everywhere
 

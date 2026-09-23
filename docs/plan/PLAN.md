@@ -11,10 +11,9 @@ than no plan.
 
 ## Now
 
-### Merge the open pull requests
-Eight are green: #9 (Spring Boot 4, supersedes #2) and seven dependabot bumps.
-Nothing else should start on top of a Spring Boot 4 migration that has not
-landed.
+### Merge the remaining dependabot pull requests
+Seven are green (#1, #3, #4, #5, #6, #7, #8) — CI actions and base images. The
+Spring Boot 4 migration landed in #9.
 **Blocked by:** needs a human to merge.
 
 ### Take irc-client 1.1.0

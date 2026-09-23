@@ -53,6 +53,10 @@ to catch a mismatch, so the browser must be changed in the same commit.
 
 ## Decisions worth knowing
 
+- **Spring Boot 4 / Jackson 3** (2026-09-22). Jackson's package moved to
+  `tools.jackson` and its exceptions became unchecked; `TestRestTemplate` was
+  removed. The tests kept their shape via `TestHttp` rather than being rewritten
+  around `RestTestClient`. Rejected: staying on Boot 3.
 - **Plain WebSocket, not STOMP.** One socket carrying a handful of message types;
   STOMP would add a broker, a client library and a subscription model to say the
   same thing. Rejected: STOMP over SockJS.
