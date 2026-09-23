@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # A pull request builds the image to prove the Dockerfile still works, but
       # publishes nothing: an image from an unreviewed branch has no business in
