@@ -32,12 +32,22 @@ class ServerTextTest {
     }
 
     @Test
-    void colourDigitsAfterTheColourCodeSurvive() {
-        // Only \u0003 itself is a control character; the digits and comma that
-        // would form a colour spec to a real IRC client are ordinary text here,
-        // since this class never tries to tell a genuine colour spec apart from a
-        // sentence that happens to start with digits.
-        assertEquals("04,01Login", ServerText.sanitise("\u000304,01Login"));
+    void aDecimalColourSpecIsStrippedWithItsDigits() {
+        // \u0003 plus a well-formed foreground/background digit spec: irc-client's
+        // IRCFormatting.strip() removes the whole thing, not just the control
+        // character, since the digits are the colour spec rather than content.
+        assertEquals("Login", ServerText.sanitise("\u000304,01Login"));
+    }
+
+    @Test
+    void aHexColourSpecIsStrippedWithItsDigits() {
+        assertEquals("Login", ServerText.sanitise("\u0004FF0000,00FF00Login"));
+    }
+
+    @Test
+    void digitsWithNoColourCodeAreOrdinaryText() {
+        // Without the leading \u0003, "04,01" is just text and must survive.
+        assertEquals("04,01Login", ServerText.sanitise("04,01Login"));
     }
 
     @Test
