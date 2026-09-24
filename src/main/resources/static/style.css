@@ -8,6 +8,9 @@
   --good: #5fca8a;
   --bad: #ef6f6f;
   --warn: #e5b567;
+  --irc-brand-mark: var(--accent);
+  --irc-brand-dot: #79e2b2;
+  --irc-brand-wordmark: #f3f6fc;
 }
 
 * { box-sizing: border-box; }

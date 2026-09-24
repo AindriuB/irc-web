@@ -1,5 +1,7 @@
 :root { --bg: #12141a; --panel: #191c24; --line: #262b36; --text: #d7dae3;
-        --dim: #7c8496; --accent: #6aa9ff; --good: #5fca8a; --bad: #ef6f6f; }
+        --dim: #7c8496; --accent: #6aa9ff; --good: #5fca8a; --bad: #ef6f6f;
+        --irc-brand-mark: var(--accent); --irc-brand-dot: #79e2b2;
+        --irc-brand-wordmark: #f3f6fc; }
 * { box-sizing: border-box; }
 body {
   margin: 0; min-height: 100vh; display: grid; place-items: center;
