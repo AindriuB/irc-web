@@ -188,6 +188,33 @@ test('a connect failure while connecting shows the reason next to the form and r
   assert.equal(ui.document.getElementById('go').disabled, false);
 });
 
+test('a reconnect that reaches ready clears a previously shown connect failure', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
+  const ui = page(fakeFetch());
+  await settle();
+  const socket = ui.sockets[0];
+  socket.emit('open');
+  await settle();
+
+  socket.emit('message', { data: JSON.stringify({ type: 'status', state: 'connecting' }) });
+  await settle();
+  socket.emit('message', {
+    data: JSON.stringify({ type: 'status', state: 'disconnected', detail: HINT }),
+  });
+  await settle();
+
+  const state = ui.document.getElementById('profile-state');
+  assert.ok(state.classList.contains('error-text'), 'the failed attempt should have shown red');
+
+  socket.emit('message', { data: JSON.stringify({ type: 'status', state: 'connecting' }) });
+  await settle();
+  assert.ok(!state.classList.contains('error-text'), 'a fresh attempt clears the old failure');
+
+  socket.emit('message', { data: JSON.stringify({ type: 'status', state: 'ready' }) });
+  await settle();
+  assert.ok(!state.classList.contains('error-text'));
+});
+
 test('a disconnect with no detail leaves the profile state alone', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval', 'setTimeout'] });
   const ui = page(fakeFetch());

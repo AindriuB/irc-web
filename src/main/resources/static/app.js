@@ -412,10 +412,19 @@ function handle(event) {
       const wasConnecting = ui.state.classList.contains('connecting');
       setState(event.state, event.detail);
       if (event.detail) { append(STATUS_BUFFER, 'system', null, event.detail); }
-      // A user-initiated disconnect carries no detail; only a failed connect
-      // attempt should draw the eye back to the form.
+      // A user-initiated disconnect carries a detail too ("left the network",
+      // IrcWebSocketHandler#handle), so `wasConnecting` is what actually tells
+      // the two apart: the handler processes one command at a time, blocked
+      // inside `connect()` for the whole attempt, so a disconnect clicked
+      // during "connecting" cannot reach the server until that call returns
+      // and the state has already moved on to `ready` or a failed `disconnected`.
       if (event.state === 'disconnected' && event.detail && wasConnecting) {
         setProfileState(event.detail, true);
+      } else if ((event.state === 'connecting' || event.state === 'ready')
+          && ui.profileState.classList.contains('error-text')) {
+        // A new attempt, or one that made it all the way to ready: whatever
+        // failure was showing next to the form no longer applies.
+        setProfileState('', false);
       }
       break;
     }
