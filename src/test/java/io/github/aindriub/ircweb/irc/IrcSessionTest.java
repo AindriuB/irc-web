@@ -100,7 +100,7 @@ class IrcSessionTest {
                 // report the failure; nothing more useful to do here.
                 return;
             }
-            // Proves the reconnect loop is really gone: irc-client 1.1.0's default
+            // Proves the reconnect loop is really gone: irc-client's default
             // backoff would have retried within about a second if stop() had not
             // been called. Four seconds is generous headroom above that.
             try {
@@ -230,6 +230,136 @@ class IrcSessionTest {
         session.disconnect();
     }
 
+    @Test
+    @DisplayName("an ERROR during registration maps to a fixed, credential-free server-refusal reason")
+    void anErrorDuringRegistrationMapsToAServerRefusalReason() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
+                List.of());
+
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket socket = serverSocket.accept()) {
+                errorDuringRegistration(socket);
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-error");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        assertThrows(IllegalStateException.class, () -> session.connect(server, request));
+
+        synchronized (events) {
+            OutboundEvent last = events.get(events.size() - 1);
+            assertEquals("status", last.type());
+            assertEquals("disconnected", last.state());
+            assertEquals(
+                    "The server refused the connection. Check the server settings and try again.",
+                    last.detail());
+            // Only the status event's own detail is a failure reason, and that is
+            // what must never carry the server's wording. The raw pane is a
+            // deliberate, separate buffer of exactly what the server sent (see the
+            // class javadoc on RawForwarder) and is not in scope here.
+            for (OutboundEvent event : events) {
+                if (!"status".equals(event.type())) {
+                    continue;
+                }
+                String payload = JSON.writeValueAsString(event);
+                assertFalse(payload.contains("Closing Link"),
+                        "the server's own wording must not reach a status event: " + payload);
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("onReady after a reconnect runs safely off a Netty loop, on irc-client's "
+            + "connection-event thread")
+    void onReadyIsSafeAfterAReconnectOnTheConnectionEventThread() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        // Short enough that the test does not wait out irc-client's real default
+        // backoff (1000 ms initial), long enough not to race the fake server below.
+        session.setReconnectBackoffForTest(50, 100);
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
+                List.of());
+
+        CountDownLatch secondRegistrationAccepted = new CountDownLatch(1);
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket first = serverSocket.accept()) {
+                registerThenDrop(first, "webtest");
+            } catch (IOException e) {
+                return;
+            }
+            try (Socket second = serverSocket.accept()) {
+                acceptRegistrationSignaling(second, "webtest", secondRegistrationAccepted);
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-reconnect-onready");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        assertDoesNotThrow(() -> session.connect(server, request));
+
+        assertTrue(secondRegistrationAccepted.await(10, TimeUnit.SECONDS),
+                "the fake server never saw the reconnect's second registration");
+
+        // onReady runs asynchronously off the connection-event thread after a
+        // reconnect, so the second "ready" status is awaited rather than asserted
+        // on immediately.
+        long deadline = System.currentTimeMillis() + 10_000;
+        boolean sawSecondReady;
+        boolean sawChannelsAfterReady;
+        do {
+            synchronized (events) {
+                long readyCount = events.stream()
+                        .filter(e -> "status".equals(e.type()) && "ready".equals(e.state()))
+                        .count();
+                sawSecondReady = readyCount >= 2;
+                // The final value of lastReadyIndex, found first, is what "after"
+                // means below; a channels event spotted before the second ready
+                // (from the first connect) must not satisfy this.
+                int lastReadyIndex = -1;
+                for (int i = 0; i < events.size(); i++) {
+                    OutboundEvent event = events.get(i);
+                    if ("status".equals(event.type()) && "ready".equals(event.state())) {
+                        lastReadyIndex = i;
+                    }
+                }
+                boolean channelsAfter = false;
+                for (int i = lastReadyIndex + 1; lastReadyIndex >= 0 && i < events.size(); i++) {
+                    if ("channels".equals(events.get(i).type())) {
+                        channelsAfter = true;
+                        break;
+                    }
+                }
+                sawChannelsAfterReady = sawSecondReady && channelsAfter;
+            }
+            if (!sawChannelsAfterReady) {
+                Thread.sleep(50);
+            }
+        } while (!sawChannelsAfterReady && System.currentTimeMillis() < deadline);
+
+        assertTrue(sawSecondReady, "expected a second ready status after the reconnect");
+        assertTrue(sawChannelsAfterReady,
+                "expected a channels event after the second ready status");
+
+        synchronized (events) {
+            OutboundEvent secondReady = events.stream()
+                    .filter(e -> "status".equals(e.type()) && "ready".equals(e.state()))
+                    .reduce((first, second) -> second)
+                    .orElseThrow();
+            assertEquals("webtest", secondReady.nick());
+        }
+
+        session.disconnect();
+    }
+
     /**
      * Reads NICK and USER, answers with 001 (welcome) and then blocks until the
      * client closes the connection, so an already-successful registration is not
@@ -252,6 +382,79 @@ class IrcSessionTest {
         out.flush();
         socket.setSoTimeout(0);
         in.readLine();
+    }
+
+    /**
+     * Same handshake as {@link #acceptRegistration}, but counts down {@code signal}
+     * right after the 001 line is sent, before blocking on the client's eventual
+     * close. Plain {@link #acceptRegistration} cannot be observed from outside until
+     * it returns, which is too late for a caller that needs to know registration
+     * happened while the connection is still meant to stay open.
+     */
+    private static void acceptRegistrationSignaling(Socket socket, String nick,
+            CountDownLatch signal) throws IOException {
+        socket.setSoTimeout(5000);
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        OutputStream out = socket.getOutputStream();
+        String line;
+        int seen = 0;
+        while (seen < 2 && (line = in.readLine()) != null) {
+            if (line.regionMatches(true, 0, "NICK", 0, 4)
+                    || line.regionMatches(true, 0, "USER", 0, 4)) {
+                seen++;
+            }
+        }
+        out.write((":srv 001 " + nick + " :Welcome\r\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+        signal.countDown();
+        socket.setSoTimeout(0);
+        in.readLine();
+    }
+
+    /**
+     * Reads NICK and USER, answers with 001 (welcome) like {@link #acceptRegistration},
+     * but then drops the connection immediately instead of waiting for the client to
+     * close it, simulating an unexpected disconnection that irc-client's own
+     * automatic reconnect should notice and recover from.
+     */
+    private static void registerThenDrop(Socket socket, String nick) throws IOException {
+        socket.setSoTimeout(5000);
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        OutputStream out = socket.getOutputStream();
+        String line;
+        int seen = 0;
+        while (seen < 2 && (line = in.readLine()) != null) {
+            if (line.regionMatches(true, 0, "NICK", 0, 4)
+                    || line.regionMatches(true, 0, "USER", 0, 4)) {
+                seen++;
+            }
+        }
+        out.write((":srv 001 " + nick + " :Welcome\r\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
+    /**
+     * Reads NICK and USER, then answers with a bare ERROR, the shape irc-client
+     * 1.2.1's {@code RegistrationHandler} maps to a {@link
+     * io.github.aindriub.irc.client.handler.ServerRefusedException}.
+     */
+    private static void errorDuringRegistration(Socket socket) throws IOException {
+        socket.setSoTimeout(5000);
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        OutputStream out = socket.getOutputStream();
+        String line;
+        int seen = 0;
+        while (seen < 2 && (line = in.readLine()) != null) {
+            if (line.regionMatches(true, 0, "NICK", 0, 4)
+                    || line.regionMatches(true, 0, "USER", 0, 4)) {
+                seen++;
+            }
+        }
+        out.write("ERROR :Closing Link\r\n".getBytes(StandardCharsets.UTF_8));
+        out.flush();
     }
 
     private static void rejectRegistration(Socket socket) throws IOException {

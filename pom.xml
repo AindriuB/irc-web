@@ -42,7 +42,7 @@
 	<properties>
 		<java.version>21</java.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-		<irc-client.version>1.1.0</irc-client.version>
+		<irc-client.version>1.2.1</irc-client.version>
 	</properties>
 
 	<dependencies>

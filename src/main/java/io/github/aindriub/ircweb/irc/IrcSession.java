@@ -13,6 +13,7 @@ import io.github.aindriub.irc.client.bot.IRCBotBuilder;
 import io.github.aindriub.irc.client.bot.MessageContext;
 import io.github.aindriub.irc.client.event.Event;
 import io.github.aindriub.irc.client.event.EventHandler;
+import io.github.aindriub.irc.client.handler.ServerRefusedException;
 import io.github.aindriub.irc.client.message.IRCMessage;
 import io.github.aindriub.irc.client.state.ChannelState;
 import io.github.aindriub.irc.client.state.ChannelUser;
@@ -20,10 +21,14 @@ import io.github.aindriub.irc.client.state.ChannelUser;
 /**
  * One browser's IRC connection.
  *
- * <p>Everything the library emits arrives on a Netty event loop thread and is handed
- * straight to {@code sink}. The sink is responsible for getting it to the browser
- * safely; nothing here blocks, because blocking an event loop thread stops the
- * connection it belongs to.
+ * <p>Most of what the library emits arrives on a Netty event loop thread and is
+ * handed straight to {@code sink}. The exception is {@link Forwarder#onReady}: after
+ * a reconnect (irc-client 1.2.0+) it runs on irc-client's own dedicated
+ * connection-event thread instead, not a Netty loop. Either way the sink is
+ * responsible for getting the event to the browser safely; nothing here blocks,
+ * because blocking an event loop thread stops the connection it belongs to, and
+ * blocking the connection-event thread would delay every later connection-state
+ * event and reconnect attempt.
  */
 public class IrcSession {
 
@@ -45,8 +50,29 @@ public class IrcSession {
 
     private volatile IRCBot bot;
 
+    /**
+     * -1 in production, which leaves irc-client's own reconnect backoff (1000 ms
+     * initial, 60000 ms max, unlimited attempts) untouched. Set only through
+     * {@link #setReconnectBackoffForTest}.
+     */
+    private volatile long testReconnectInitialDelayMillis = -1;
+    private volatile long testReconnectMaxDelayMillis = -1;
+
     public IrcSession(Consumer<OutboundEvent> sink) {
         this.sink = sink;
+    }
+
+    /**
+     * Package-private seam so a test can make irc-client retry within about 100 ms
+     * instead of waiting out the library's default backoff. Production code never
+     * calls this, so it keeps the library's own defaults. {@code maxAttempts} is
+     * deliberately not a parameter here: leaving reconnection unlimited, exactly
+     * like production, is what task 03's finite-attempts behaviour is tested
+     * against.
+     */
+    void setReconnectBackoffForTest(long initialDelayMillis, long maxDelayMillis) {
+        this.testReconnectInitialDelayMillis = initialDelayMillis;
+        this.testReconnectMaxDelayMillis = maxDelayMillis;
     }
 
     /**
@@ -86,7 +112,7 @@ public class IrcSession {
                 builder.password(request.password());
             }
 
-            builder.client()
+            var clientBuilder = builder.client()
                     .secure(server.tls())
                     // A local server presents a certificate it generated itself, so
                     // validating it would fail by design. Never relaxed for a public
@@ -97,6 +123,14 @@ public class IrcSession {
                     // how you tell "the server refused this" from "this client did
                     // not send it", without reaching for the server's logs.
                     .eventListener(new RawForwarder());
+
+            long testInitial = testReconnectInitialDelayMillis;
+            long testMax = testReconnectMaxDelayMillis;
+            if (testInitial >= 0 && testMax >= 0) {
+                // Test-only seam: keeps maxAttempts at 0 (unlimited), same as
+                // production, and only shortens the delay between attempts.
+                clientBuilder.reconnectBackoff(testInitial, testMax, 0);
+            }
 
             if (hasText(request.saslPassword())) {
                 builder.client().sasl(
@@ -118,9 +152,11 @@ public class IrcSession {
             stopBuilt(built);
             String reason = mapFailureReason(t);
             // Only the throwable's own class and the safe, mapped reason are
-            // logged. Never t.getMessage() or t itself: irc-client 1.1.0 puts the
-            // rejected value in a cause's message, and logging the throwable would
-            // print that cause chain.
+            // logged. Never t.getMessage() or t itself: irc-client 1.1.0 put the
+            // rejected value in a cause's message, and although 1.2.1's IRCText
+            // validators and eager builder checks (task 01/02 of the 1.2.1 security
+            // patch) no longer do that, logging the throwable is kept off the table
+            // as defence in depth rather than trusted to stay that way forever.
             LOGGER.info("Connection to {} failed: {}", server.id(), t.getClass().getSimpleName());
             sink.accept(OutboundEvent.status("disconnected", reason));
             if (t instanceof Error error) {
@@ -227,16 +263,36 @@ public class IrcSession {
             "A saved credential is not valid for IRC. Edit the profile and save it again.";
     private static final String UNREACHABLE_REASON =
             "Could not reach the server. Check the host and port, then try again.";
+    private static final String SERVER_REFUSED_REASON =
+            "The server refused the connection. Check the server settings and try again.";
 
     /**
-     * A fixed, credential-free reason for each failure irc-client 1.1.0 can report on
-     * a first connect. Matched only on the outermost throwable's own message, never on
-     * a cause's message: {@code RegistrationHandler.exceptionCaught} wraps validation
-     * failures such as a rejected password in a cause whose message repeats the value,
-     * and that must never reach the browser or a log. Where a cause is consulted at
-     * all (below), only its type is inspected, never its message.
+     * A fixed, credential-free reason for each failure irc-client can report on a
+     * first connect. Matched only on the outermost throwable's own type or message,
+     * never on a cause's message: {@code RegistrationHandler.exceptionCaught} wraps
+     * validation failures such as a rejected password in a cause whose message
+     * repeats the value, and that must never reach the browser or a log. Where a
+     * cause is consulted at all (below), only its type is inspected, never its
+     * message.
      */
     private static String mapFailureReason(Throwable e) {
+        if (e instanceof ServerRefusedException) {
+            // irc-client 1.2.1's RegistrationHandler throws this, unwrapped, when
+            // the server sends ERROR during registration or answers a TLS attempt
+            // in plain text. Its message and getReply() carry the server's own
+            // words, which task 02 may choose to surface; here only the fact of a
+            // refusal is reported, never that text.
+            return SERVER_REFUSED_REASON;
+        }
+        if (e instanceof IllegalArgumentException) {
+            // irc-client 1.2.1's builders (ClientConfigurationBuilder.password/sasl,
+            // IRCBotBuilder.password) validate eagerly and throw this directly,
+            // before a socket is ever opened. The message never contains the
+            // rejected value (only its length or the index of the problem), but is
+            // still never logged or sent, on the same defence-in-depth footing as
+            // every other reason here.
+            return CREDENTIAL_NOT_VALID_REASON;
+        }
         String message = e.getMessage();
         if (message != null) {
             if (message.startsWith("Registration rejected by the server")) {
