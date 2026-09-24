@@ -86,16 +86,26 @@ class ProfileValidationIT {
     }
 
     @Test
-    @DisplayName("a SASL password with a space is rejected, and never echoed")
-    void saslPasswordWithSpaceRejected() {
+    @DisplayName("a SASL password with a space is accepted")
+    void saslPasswordWithSpaceAccepted() {
         ResponseEntity<Map> response = put("/api/servers/local/profile",
                 new ProfileUpdate("n", null, null, null, "acct", "has space", List.of()),
+                Map.class);
+
+        assertEquals(HttpStatus.OK, response.getStatusCode());
+    }
+
+    @Test
+    @DisplayName("a SASL password with a line break is rejected, and never echoed")
+    void saslPasswordWithLineBreakRejected() {
+        ResponseEntity<Map> response = put("/api/servers/local/profile",
+                new ProfileUpdate("n", null, null, null, "acct", "has\nbreak", List.of()),
                 Map.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
         assertEquals("The SASL password cannot contain spaces or line breaks",
                 response.getBody().get("error"));
-        assertFalse(String.valueOf(response.getBody()).contains("has space"));
+        assertFalse(String.valueOf(response.getBody()).contains("has\nbreak"));
     }
 
     @Test

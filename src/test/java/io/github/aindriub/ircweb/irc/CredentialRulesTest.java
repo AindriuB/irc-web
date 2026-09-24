@@ -32,11 +32,18 @@ class CredentialRulesTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"a b", "a\tb", "a\rb", "a\nb", "a\0b"})
-    @DisplayName("a SASL password with whitespace or a line break is rejected")
-    void saslPasswordRejectsUnusableCharacters(String value) {
+    @ValueSource(strings = {"a\rb", "a\nb", "a\0b"})
+    @DisplayName("a SASL password with a line break is rejected")
+    void saslPasswordRejectsControlCharacters(String value) {
         assertEquals(Optional.of("The SASL password cannot contain spaces or line breaks"),
                 CredentialRules.checkSaslPassword(value));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"correct horse battery", "a b"})
+    @DisplayName("a SASL password with a space is accepted")
+    void saslPasswordAcceptsSpaces(String value) {
+        assertTrue(CredentialRules.checkSaslPassword(value).isEmpty());
     }
 
     @Test
@@ -44,6 +51,20 @@ class CredentialRulesTest {
     void saslUsernameRejectsSpace() {
         assertEquals(Optional.of("The SASL username cannot contain spaces"),
                 CredentialRules.checkSaslUsername("a b"));
+    }
+
+    @Test
+    @DisplayName("a server password starting with ':' is rejected")
+    void serverPasswordRejectsLeadingColon() {
+        assertEquals(Optional.of("The server password must not start with ':'"),
+                CredentialRules.checkPassword(":secret"));
+    }
+
+    @Test
+    @DisplayName("a SASL username starting with ':' is rejected")
+    void saslUsernameRejectsLeadingColon() {
+        assertEquals(Optional.of("The SASL username must not start with ':'"),
+                CredentialRules.checkSaslUsername(":name"));
     }
 
     @ParameterizedTest
@@ -74,10 +95,12 @@ class CredentialRulesTest {
         String secretValue = "sekrit-token-with-a-space in-it";
         assertFalse(CredentialRules.checkPassword(secretValue).orElseThrow()
                 .contains(secretValue));
-        assertFalse(CredentialRules.checkSaslPassword(secretValue).orElseThrow()
-                .contains(secretValue));
         assertFalse(CredentialRules.checkSaslUsername(secretValue).orElseThrow()
                 .contains(secretValue));
+
+        String secretValueWithNul = "sekrit-token-with-a-nul\0in-it";
+        assertFalse(CredentialRules.checkSaslPassword(secretValueWithNul).orElseThrow()
+                .contains(secretValueWithNul));
 
         String passLine = "PASS oauth:sekrit-token-123";
         assertFalse(CredentialRules.checkPassword(passLine).orElseThrow()
