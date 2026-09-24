@@ -25,13 +25,14 @@ bot reconnecting every 60s for hours (see HISTORY).
 builder's `IllegalArgumentException` map by type to fixed, credential-free
 reasons, and the UI now shows a `reconnecting` state (warn-coloured, input and
 Say disabled, Stop enabled, Connect re-enabled once the bot gives up) — see
-HISTORY. Two follow-ons are in flight: task 02 (surface the server's own
-NOTICE/ERROR text on a failed registration) and task 03 (drive that
-`reconnecting`/gave-up UI from irc-client 1.2.1's `onDisconnected`,
-`onReconnecting`, `onGaveUp` events; task 04 built the UI side against a
-fixed contract, 03 is the wiring). 03 depends on 02.
+HISTORY. Task 02 has landed: a failed registration now leads with the
+server's own scrubbed NOTICE/ERROR text ahead of the fixed reason. **03 (task
+in flight: `03-reconnecting-status-and-gave-up`) is next and is the last item
+here** — drive the `reconnecting`/gave-up UI from irc-client 1.2.1's
+`onDisconnected`, `onReconnecting`, `onGaveUp` events; task 04 built the UI
+side against a fixed contract, 03 is the wiring.
 **Later, small:** `CredentialRules`' javadoc still says "mirroring irc-client
-1.1.0"; needs a one-line update to 1.2.1 once 02/03 land.
+1.1.0"; needs a one-line update to 1.2.1 once 03 lands.
 
 (Session-expiry — the socket dying silently 30 minutes after page load — is
 fixed; see HISTORY.)

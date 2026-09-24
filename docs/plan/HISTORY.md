@@ -17,6 +17,28 @@ in the same commit.
 **Cost:** <what was hard, what was tried and abandoned, what not to retry.>
 -->
 
+## 2026-09-24 — A failed registration now shows the server's own words
+
+While a connect is in progress, irc-web captures the last server
+NOTICE/ERROR trailing text inbound-only, through `RawForwarder`. On a failed
+registration the browser detail now leads with `"<network> said: <text>"`
+(e.g. `"Twitch said: Login unsuccessful"`) ahead of the fixed,
+cause-typed reason task 02's predecessor already showed. The captured text
+is scrubbed of the configured server password, the SASL password, and the
+token part of `oauth:<token>` (each replaced by `[redacted]`, in memory
+only, never logged), then run through irc-client's `IRCFormatting.strip`, a
+control-character strip, whitespace collapsing, and a 200-character cap.
+Capture is per attempt and stops on success or failure. The nick is now also
+checked against the SASL-username rule when it stands in as the SASL
+username, and the reconnect test asserts `onReady` runs on
+`irc-connection-events`.
+**Cost:** the incident behind this: Twitch answered an app access token
+(not a user token) with "Login unsuccessful", and irc-web showed only
+"connection closed before registration finished", costing a debugging
+round trip. Review added the password scrubbing as defence in depth against
+a server that echoes the password back. A review wording ambiguity briefly
+got colour-digit stripping inverted before being caught.
+
 ## 2026-09-24 — irc-client 1.2.1 is live, and the UI has a reconnecting state
 
 irc-web now pins irc-client 1.2.1 (1.2.0 was dropped unpublished on the
