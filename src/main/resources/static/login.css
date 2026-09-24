@@ -1,5 +1,7 @@
 :root { --bg: #12141a; --panel: #191c24; --line: #262b36; --text: #d7dae3;
-        --dim: #7c8496; --accent: #6aa9ff; --good: #5fca8a; --bad: #ef6f6f; }
+        --dim: #7c8496; --accent: #6aa9ff; --good: #5fca8a; --bad: #ef6f6f;
+        --irc-brand-mark: var(--accent); --irc-brand-dot: #79e2b2;
+        --irc-brand-wordmark: #f3f6fc; }
 * { box-sizing: border-box; }
 body {
   margin: 0; min-height: 100vh; display: grid; place-items: center;
@@ -9,6 +11,8 @@ body {
 main { width: 330px; padding: 28px; background: var(--panel);
        border: 1px solid var(--line); border-radius: 8px; }
 h1 { margin: 0; font-size: 18px; letter-spacing: 0.04em; }
+.brand { margin: 0 0 4px; }
+.brand svg { display: block; width: 180px; height: auto; }
 .sub { margin: 4px 0 22px; color: var(--dim); font-size: 12px; }
 label { display: block; margin-bottom: 14px; font-size: 11px;
         text-transform: uppercase; letter-spacing: 0.08em; color: var(--dim); }

@@ -29,6 +29,8 @@ irc-web:
 
 server:
   port: 8667
+  mime-mappings:
+    webmanifest: application/manifest+json
 
 logging:
   level:
