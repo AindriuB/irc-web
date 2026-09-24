@@ -20,9 +20,8 @@ services:
       context: ..
       dockerfile: Dockerfile
     image: irc-web:local
-    # Not `irc-web`: the homelab deployment
-    # (/home/andrew/homelab/compose/irc/compose.yaml) permanently owns that
-    # name on this host, and the two stacks can run side by side.
+    # Not `irc-web`: the homelab deployment permanently owns that name on
+    # this host, and the two stacks can run side by side.
     container_name: irc-web-dev
     restart: unless-stopped
     depends_on:

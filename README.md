@@ -22,7 +22,7 @@ Everything in containers:
 
 ```bash
 docker compose -f docker/compose.yaml up -d --build
-# http://localhost:8667
+# http://localhost:8081
 ```
 
 A deployed instance runs on port 8667. The `docker/compose.yaml` stack above is the
