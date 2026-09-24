@@ -18,6 +18,10 @@
     <label>Password
       <input name="password" type="password" autocomplete="current-password" required>
     </label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="remember-me" checked>
+      Remember me
+    </label>
     <!-- Filled in below from the cookie. A form post carries no token otherwise
          and is refused, which looks exactly like a wrong password. -->
     <input type="hidden" id="csrf" name="_csrf">
