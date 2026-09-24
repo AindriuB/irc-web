@@ -33,13 +33,13 @@ VOLUME ["/data"]
 ENV IRC_WEB_DATA_DIR=/data
 
 USER app
-EXPOSE 8081
+EXPOSE 8667
 
 # wget is in busybox, so this costs nothing extra. /health rather than / because
 # it proves the configuration loaded rather than merely that Tomcat is
 # answering, and rather than /api/servers because that needs credentials a
 # probe has no business holding.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
-    CMD wget -q -O /dev/null http://127.0.0.1:8081/health || exit 1
+    CMD wget -q -O /dev/null http://127.0.0.1:8667/health || exit 1
 
 ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-jar", "app.jar"]
