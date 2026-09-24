@@ -15,6 +15,8 @@ import io.github.aindriub.irc.client.event.Event;
 import io.github.aindriub.irc.client.event.EventHandler;
 import io.github.aindriub.irc.client.handler.ServerRefusedException;
 import io.github.aindriub.irc.client.message.IRCMessage;
+import io.github.aindriub.irc.client.message.IRCMessageParser;
+import io.github.aindriub.irc.client.message.IRCParseException;
 import io.github.aindriub.irc.client.state.ChannelState;
 import io.github.aindriub.irc.client.state.ChannelUser;
 
@@ -58,6 +60,18 @@ public class IrcSession {
     private volatile long testReconnectInitialDelayMillis = -1;
     private volatile long testReconnectMaxDelayMillis = -1;
 
+    /**
+     * Set only while a connect is in progress, and read only by the connecting
+     * thread after {@code IRCBot.start()} returns or throws. Written from a Netty
+     * thread ({@link RawForwarder}) and from {@link Forwarder#onReady}, which after
+     * a reconnect runs on irc-client's own connection-event thread rather than a
+     * Netty loop; volatile is enough because each of {@link #capturedNotice} and
+     * {@link #capturedError} only ever has one writer at a time.
+     */
+    private volatile boolean capturingServerText;
+    private volatile String capturedNotice;
+    private volatile String capturedError;
+
     public IrcSession(Consumer<OutboundEvent> sink) {
         this.sink = sink;
     }
@@ -93,6 +107,14 @@ public class IrcSession {
             sink.accept(OutboundEvent.status("disconnected", credentialProblem));
             throw new IllegalArgumentException(credentialProblem);
         }
+
+        // Capture starts only now that the credential check has passed, and stops
+        // once this attempt settles (onReady, or the catch below): a NOTICE or
+        // ERROR seen at any other time, such as after registration, must never end
+        // up in a later failure's reason.
+        capturedNotice = null;
+        capturedError = null;
+        capturingServerText = true;
 
         IRCBot built = null;
         try {
@@ -150,6 +172,7 @@ public class IrcSession {
             // that could stop it.
             running.set(false);
             stopBuilt(built);
+            capturingServerText = false;
             String reason = mapFailureReason(t);
             // Only the throwable's own class and the safe, mapped reason are
             // logged. Never t.getMessage() or t itself: irc-client 1.1.0 put the
@@ -158,7 +181,8 @@ public class IrcSession {
             // patch) no longer do that, logging the throwable is kept off the table
             // as defence in depth rather than trusted to stay that way forever.
             LOGGER.info("Connection to {} failed: {}", server.id(), t.getClass().getSimpleName());
-            sink.accept(OutboundEvent.status("disconnected", reason));
+            sink.accept(OutboundEvent.status("disconnected",
+                    withServerText(server, request, reason)));
             if (t instanceof Error error) {
                 // Not this method's to translate: cleanup above has already run,
                 // and the caller needs to see what actually happened.
@@ -251,12 +275,88 @@ public class IrcSession {
         return value != null && !value.isBlank();
     }
 
+    private static final String NICK_AS_SASL_USERNAME_REASON =
+            "The nick cannot contain spaces or start with ':' when it is also the SASL "
+                    + "username";
+
     /** Empty when every effective credential is usable, else a message safe to show. */
     private static String firstCredentialProblem(ConnectRequest request) {
         return CredentialRules.checkPassword(request.password())
                 .or(() -> CredentialRules.checkSaslUsername(request.saslUsername()))
+                .or(() -> checkNickAsSaslUsername(request))
                 .or(() -> CredentialRules.checkSaslPassword(request.saslPassword()))
                 .orElse(null);
+    }
+
+    /**
+     * When there is a SASL password but no SASL username, {@link #connect} uses the
+     * nick as the SASL username, so the nick has to pass the same rule or irc-client's
+     * {@code sasl()} throws an {@link IllegalArgumentException} and the credential
+     * message points at the wrong field.
+     */
+    private static java.util.Optional<String> checkNickAsSaslUsername(ConnectRequest request) {
+        if (!hasText(request.saslPassword()) || hasText(request.saslUsername())) {
+            return java.util.Optional.empty();
+        }
+        return CredentialRules.checkSaslUsername(request.nick()).isPresent()
+                ? java.util.Optional.of(NICK_AS_SASL_USERNAME_REASON)
+                : java.util.Optional.empty();
+    }
+
+    /**
+     * Prefixes {@code reason} with what the server itself said, when a NOTICE or
+     * ERROR was captured during this attempt, e.g. {@code "Twitch said: Login
+     * unsuccessful. The connection closed before registration finished. Try
+     * again."}. An ERROR seen during the attempt wins over a NOTICE, since it is
+     * the server's own last word before closing the connection. Returns {@code
+     * reason} unchanged when nothing usable was captured, which is exactly what
+     * this method returned before task 02: no NOTICE or ERROR seen, or all of it
+     * turned out to be sanitised away (which includes being nothing but a
+     * credential this attempt sent, once {@link #scrubCredentials} has redacted
+     * it).
+     */
+    private String withServerText(IrcServer server, ConnectRequest request, String reason) {
+        String raw = capturedError != null ? capturedError : capturedNotice;
+        String sanitised = ServerText.sanitise(scrubCredentials(raw, request));
+        if (sanitised == null) {
+            return reason;
+        }
+        return server.name() + " said: " + sanitised + ". " + reason;
+    }
+
+    private static final String REDACTED = "[redacted]";
+
+    /**
+     * A server can echo back exactly what it was sent, and a bad password or SASL
+     * password is exactly the sort of thing that shows up in an ERROR or NOTICE
+     * explaining why registration failed ("bad password oauth:sekrit-XYZ" is the
+     * shape Twitch used in production). Every credential this attempt configured is
+     * redacted here, before {@link ServerText#sanitise} ever sees the text, so none
+     * of it can reach the browser, a log, or an exception message. Null or empty
+     * values are skipped, since {@link String#replace} would otherwise do nothing
+     * useful with them anyway.
+     */
+    private static String scrubCredentials(String raw, ConnectRequest request) {
+        if (raw == null) {
+            return null;
+        }
+        String scrubbed = redact(raw, request.password());
+        scrubbed = redact(scrubbed, request.saslPassword());
+        String password = request.password();
+        if (hasText(password) && password.regionMatches(true, 0, "oauth:", 0, 6)) {
+            // The token half of "oauth:<token>" is worth redacting on its own too:
+            // a server that only echoes the token, without the "oauth:" prefix the
+            // full-password redaction above matches, must not leak it either.
+            scrubbed = redact(scrubbed, password.substring("oauth:".length()));
+        }
+        return scrubbed;
+    }
+
+    private static String redact(String text, String value) {
+        if (value == null || value.isEmpty()) {
+            return text;
+        }
+        return text.replace(value, REDACTED);
     }
 
     private static final String CREDENTIAL_NOT_VALID_REASON =
@@ -365,6 +465,9 @@ public class IrcSession {
 
         @Override
         public void onReady(IRCBot bot) {
+            // Registration completed, so nothing captured from here on belongs to a
+            // failure reason: a NOTICE the server sends afterwards is unrelated.
+            capturingServerText = false;
             sink.accept(OutboundEvent.status("ready", "registered as " + bot.getNick(),
                     bot.getNick()));
             publishChannels();
@@ -415,12 +518,49 @@ public class IrcSession {
     }
 
     /**
-     * Every raw inbound line, for the traffic pane.
+     * Every raw inbound line, for the traffic pane. Never outbound: irc-client's
+     * {@code eventListener} is fed only by {@code AbstractInboundEventHandler},
+     * which is placed in the pipeline's read side, so our own lines such as PASS
+     * are never seen here.
      */
     private final class RawForwarder implements EventHandler<String> {
         @Override
         public void publishEvent(Event<String> event) {
-            sink.accept(OutboundEvent.raw("in", event.getPayload()));
+            String line = event.getPayload();
+            sink.accept(OutboundEvent.raw("in", line));
+            captureServerText(line);
+        }
+
+        /**
+         * Remembers the trailing text of a NOTICE or ERROR seen while a connect is
+         * in progress (see {@link #capturingServerText}), so a failed registration
+         * can quote it. Nothing here is logged or sent anywhere itself; it is only
+         * read back by {@link #withServerText}.
+         */
+        private void captureServerText(String line) {
+            if (!capturingServerText) {
+                return;
+            }
+            IRCMessage message;
+            try {
+                message = IRCMessageParser.parse(line);
+            } catch (IRCParseException e) {
+                // Deliberately silent: an unparseable inbound line is simply not a
+                // reason we can quote, not a fault of ours to report anywhere. The
+                // raw pane above already shows the line itself, and irc-client's own
+                // handlers separately decide whether it is otherwise fatal.
+                return;
+            }
+            String trailing = message.getTrailing();
+            if (trailing == null) {
+                return;
+            }
+            String command = message.getCommand();
+            if ("NOTICE".equals(command)) {
+                capturedNotice = trailing;
+            } else if ("ERROR".equals(command)) {
+                capturedError = trailing;
+            }
         }
     }
 
