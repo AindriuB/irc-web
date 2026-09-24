@@ -20,4 +20,5 @@ no row is one `planner` cannot find, and will re-plan.
 
 | Date | Task IDs | Summary | Heading (grep this exact string) |
 |---|---|---|---|
+| 2026-09-24 | 01 | Fixed-blue branding: favicon/manifest icons, login/setup logo, CSS brand variables | ## 2026-09-24 — Fixed-blue branding: favicons, manifest, login/setup logo |
 | 2026-09-24 | 01, 02, 03, 04 | Remember-me + 401 on /ws + client keep-alive fix silent 30-min session expiry; default port moved to 8667 | ## 2026-09-24 — Fixed silent session expiry, moved the default port to 8667 |

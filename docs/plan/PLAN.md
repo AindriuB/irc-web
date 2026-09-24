@@ -26,6 +26,15 @@ fixed; see HISTORY.)
 
 ## Next
 
+### Theme switcher
+The blue branding (task 01) is landing, fixed and non-switchable. The theme
+pack at /srv/dev/scratch/irc-web-theme-pack (not in the repo; the maintainer
+holds the zip) has five more palettes — phosphor, amber, iris, coral,
+paper-teal — meant to drive the whole UI, not just the logo. Needs per-palette
+text, line and good/bad/warn values the pack does not supply; a contrast pass
+(paper-teal is light, unlike the rest); removing the 22 hardcoded colours
+currently in style.css and login.css; and a picker.
+
 ### Persist the backlog
 Session history is in memory, capped at 500 messages, and a restart loses it
 along with the connections. Needs an H2 table, a retention policy, and a

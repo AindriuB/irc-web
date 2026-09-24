@@ -17,6 +17,28 @@ in the same commit.
 **Cost:** <what was hard, what was tried and abandoned, what not to retry.>
 -->
 
+## 2026-09-24 — Fixed-blue branding: favicons, manifest, login/setup logo
+
+irc-web now ships a brand identity instead of Spring Boot defaults: an inline
+SVG logo (role="img") on the login and setup pages, an aria-hidden `#.` mark
+in the app header, and matching favicon/apple-touch-icon/icon-192/512 assets
+under static/brand/, byte-identical to the reviewed theme pack's `themes/blue`.
+All three pages carry the same icon, theme-color and manifest tags.
+`/manifest.webmanifest` serves standalone display, `#12141A` background, and
+"any maskable" icons verified opaque with the mark inside the safe zone;
+`server.mime-mappings.webmanifest=application/manifest+json` was needed
+because Tomcat has no default mapping for that extension. SVG fills use
+`--irc-brand-mark`/`-dot`/`-wordmark` (blue fallbacks), with `--irc-brand-mark`
+aliased to `--accent` so a future theme switcher only changes variables.
+
+**Cost:** Review caught two things worth remembering: the header symbol was
+announcing "irc-web" twice to screen readers before it was made
+`aria-hidden`, and the first pass hardcoded fills instead of using the pack's
+variables. Separately, before task 02 lands, the favicon and manifest are
+still redirected to login for an unauthenticated visitor — known gap, not a
+regression. The implementer's first `spring-boot:run` collided with the live
+homelab instance on 8667; dev runs must pass `--server.port=808x`.
+
 ## 2026-09-24 — Fixed silent session expiry, moved the default port to 8667
 
 The SPA talks only over its WebSocket after load, and socket traffic never
