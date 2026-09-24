@@ -4,6 +4,13 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -87,6 +94,34 @@ class BrandingIT {
                 manifest.getHeaders().getContentType());
     }
 
+    /**
+     * Sends a request line built by hand over a raw socket, bypassing any
+     * normalisation an HTTP client like {@link RestTemplate} (or the {@link java.net.URI}
+     * it builds one from) would apply to a target containing {@code ..}. What is
+     * asserted here is what the server does with the bytes as sent, not with
+     * whatever a well-behaved client would have turned them into first.
+     */
+    private int rawGetStatus(String target) throws IOException {
+        try (Socket socket = new Socket("localhost", port)) {
+            socket.setSoTimeout(5000);
+            OutputStream out = socket.getOutputStream();
+            String request = "GET " + target + " HTTP/1.1\r\n"
+                    + "Host: localhost\r\n"
+                    + "Connection: close\r\n\r\n";
+            out.write(request.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+            String statusLine = reader.readLine();
+            assertNotNull(statusLine, "expected a response to " + target
+                    + " rather than the connection just closing");
+            // "HTTP/1.1 400 Bad Request"
+            String[] parts = statusLine.split(" ", 3);
+            return Integer.parseInt(parts[1]);
+        }
+    }
+
     @Test
     @Order(1)
     @DisplayName("before setup, brand assets and the manifest are reachable but the app is not")
@@ -101,6 +136,29 @@ class BrandingIT {
 
     @Test
     @Order(2)
+    @DisplayName("before setup, the API says what is wrong rather than redirecting a script to HTML")
+    void apiRefusedBeforeSetup() {
+        ResponseEntity<Map> response = rest.getForEntity("/api/servers", Map.class);
+
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertTrue(String.valueOf(response.getBody().get("error")).contains("set up"));
+    }
+
+    @Test
+    @Order(3)
+    @DisplayName("before setup, a crafted /brand/ target cannot reach what it is not")
+    void brandPrefixCannotBeSmuggledPast() throws IOException {
+        for (String target : List.of("/brand/..;/index.html", "/brand/%2e%2e/app.js",
+                "/brand/../api/servers")) {
+            int status = rawGetStatus(target);
+            assertTrue(status == 400 || (status >= 300 && status < 400),
+                    target + " should have been refused (400) or redirected, not answered as "
+                            + status);
+        }
+    }
+
+    @Test
+    @Order(4)
     @DisplayName("choosing an account opens the application")
     void createAccount() {
         ResponseEntity<Void> created = rest.exchange("/api/setup", HttpMethod.POST,
@@ -110,14 +168,14 @@ class BrandingIT {
     }
 
     @Test
-    @Order(3)
+    @Order(5)
     @DisplayName("after setup, brand assets and the manifest are still reachable without credentials")
     void reachableAfterSetup() {
         assertBrandAssetsReachable();
     }
 
     @Test
-    @Order(4)
+    @Order(6)
     @DisplayName("after setup, the application itself still requires signing in")
     void appStillRequiresLogin() {
         ResponseEntity<Void> index = restNoRedirects.getForEntity("/index.html", Void.class);
@@ -128,5 +186,14 @@ class BrandingIT {
         assertTrue(appJs.getStatusCode().is3xxRedirection()
                         || appJs.getStatusCode() == HttpStatus.UNAUTHORIZED,
                 "/app.js should not be handed to an unauthenticated browser");
+    }
+
+    @Test
+    @Order(7)
+    @DisplayName("after setup, the API refuses an unauthenticated caller outright")
+    void apiRefusedAfterSetup() {
+        ResponseEntity<String> response = rest.getForEntity("/api/servers", String.class);
+
+        assertEquals(HttpStatus.UNAUTHORIZED, response.getStatusCode());
     }
 }

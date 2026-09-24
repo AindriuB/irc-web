@@ -40,7 +40,16 @@ public class SetupRequiredFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
             FilterChain chain) throws ServletException, IOException {
-        String path = request.getRequestURI();
+        // The servlet path (plus any path info) is what the container has already
+        // parsed the request line into, rather than the raw URI - so an encoded or
+        // traversal-laden target like "/brand/..;/index.html" cannot slip past the
+        // "/brand/" prefix check below by looking like something else to this
+        // filter than it looks like to whatever finally serves the response. There
+        // is no context path here, so nothing else needs stripping.
+        String path = request.getServletPath();
+        if (request.getPathInfo() != null) {
+            path = path + request.getPathInfo();
+        }
 
         if (!users.needsSetup()) {
             // Once there is an account the setup page is not just useless but
