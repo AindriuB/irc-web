@@ -187,10 +187,12 @@ public class IrcWebSocketHandler extends TextWebSocketHandler {
             session.attach(watcher);
             try {
                 session.irc().connect(server, withStoredDetails(command));
-            } catch (RuntimeException e) {
+            } catch (RuntimeException | Error e) {
                 // A session that never registered is not worth keeping. Left in the
                 // registry it would refuse every later attempt as "already
-                // connected" to a connection that does not exist.
+                // connected" to a connection that does not exist. An Error from the
+                // library (an OutOfMemoryError, a broken TLS classpath) leaves the
+                // same problem and must not be allowed to skip this cleanup.
                 registry.end(username);
                 live = null;
                 throw e;
