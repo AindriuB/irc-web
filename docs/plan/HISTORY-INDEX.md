@@ -20,4 +20,4 @@ no row is one `planner` cannot find, and will re-plan.
 
 | Date | Task IDs | Summary | Heading (grep this exact string) |
 |---|---|---|---|
-_No entries yet._
+| 2026-09-24 | 01, 02, 03, 04 | Remember-me + 401 on /ws + client keep-alive fix silent 30-min session expiry; default port moved to 8667 | ## 2026-09-24 — Fixed silent session expiry, moved the default port to 8667 |

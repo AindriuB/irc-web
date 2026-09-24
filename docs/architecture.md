@@ -16,9 +16,10 @@ Keep it to the parts that are stable.
 | `store/` | `src/main/java/.../store` | JPA entities and repositories |
 | `static/` | `src/main/resources/static` | The whole front end: `index.html`, `app.js`, `style.css` |
 
-One process, port **8081**. Its own ergo IRC server on 6667/6697, bound to
-loopback, started by `docker/compose.yaml`. Data — H2 file, encryption key —
-lives under `IRC_WEB_DATA_DIR`.
+One process, port **8667** by default; the dev compose stack and local runs
+use **8081** instead, via `SERVER_PORT`. Its own ergo IRC server on 6667/6697,
+bound to loopback, started by `docker/compose.yaml`. Data — H2 file,
+encryption key — lives under `IRC_WEB_DATA_DIR`.
 
 ## How they talk
 
@@ -72,6 +73,37 @@ to catch a mismatch, so the browser must be changed in the same commit.
   Restarting the app loses it. Persisting it was explicitly deferred.
 - **One network at a time**, keyed by account. Makes "am I already connected?"
   a question with one answer. Several at once needs a window that can show them.
+
+## Session model
+
+The SPA talks only over its WebSocket after load, and socket traffic never
+refreshes the HTTP session on its own — that gap is what used to close the
+socket with 1008 thirty minutes after page load and then loop on 1006
+forever, described in HISTORY. Three pieces keep it working now:
+
+- **Remember-me.** Spring Security persistent-token remember-me
+  (`JdbcTokenRepositoryImpl` on H2, 30 days). The token key is an HMAC of a
+  label under `SecretCodec`'s key, not a raw secret. The login page's
+  "Remember me" checkbox is checked by default, so a browser normally carries
+  the cookie without the user doing anything. Logout deletes the row even
+  when the request is authenticated only by the cookie — `LogoutFilter` runs
+  before `RememberMeAuthenticationFilter` — but only after a constant-time
+  check of the cookie's token against the stored row.
+- **Client keep-alive.** `app.js` pings `/api/me` every 5 minutes while the
+  socket is open, which keeps the HTTP session itself alive so the common
+  case never needs the remember-me cookie at all.
+- **`/ws/**` answers 401, not 302.** A browser's WebSocket API cannot see a
+  redirect — it reports one only as an opaque 1006 close — so an
+  unauthenticated upgrade must fail with a status the client can act on.
+  Before reopening after a close, `app.js` probes `/api/me` over plain HTTP:
+  a 401 sends it to login, a network error backs off and retries.
+
+**Deployments behind a TLS proxy** must set
+`server.forward-headers-strategy=framework` (or `native`) in the deployment
+environment, not in `application.yml`. It is deliberately not in the
+checked-in config because the dev compose stack binds all interfaces without
+a proxy in front of it; trusting `X-Forwarded-*` there would let anyone who
+can reach the container spoof scheme and host.
 
 ## Repository topology
 

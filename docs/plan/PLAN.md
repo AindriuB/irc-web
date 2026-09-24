@@ -14,9 +14,15 @@ than no plan.
 ### Take irc-client 1.2.0
 Carries the TLS-refusal message fix (#39), the reconnect-throttle fix plus
 `ServerRefusedException` (#40), and whatever bot-facade additions land in that
-release.
+release. 1.2.0 will also bring connection-state events (`onDisconnected`,
+`onReconnecting`, `onGaveUp`) that irc-web should surface as a "reconnecting…"
+status in the UI — that needs its own task once 1.2.0 ships, not part of this
+one.
 **Blocked by:** irc-client 1.2.0 not yet released (irc-web pins 1.1.0 in
 pom.xml).
+
+(Session-expiry — the socket dying silently 30 minutes after page load — is
+fixed; see HISTORY.)
 
 ## Next
 
