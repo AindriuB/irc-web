@@ -181,7 +181,8 @@ public class IrcSession {
             // patch) no longer do that, logging the throwable is kept off the table
             // as defence in depth rather than trusted to stay that way forever.
             LOGGER.info("Connection to {} failed: {}", server.id(), t.getClass().getSimpleName());
-            sink.accept(OutboundEvent.status("disconnected", withServerText(server, reason)));
+            sink.accept(OutboundEvent.status("disconnected",
+                    withServerText(server, request, reason)));
             if (t instanceof Error error) {
                 // Not this method's to translate: cleanup above has already run,
                 // and the caller needs to see what actually happened.
@@ -310,15 +311,52 @@ public class IrcSession {
      * the server's own last word before closing the connection. Returns {@code
      * reason} unchanged when nothing usable was captured, which is exactly what
      * this method returned before task 02: no NOTICE or ERROR seen, or all of it
-     * turned out to be sanitised away.
+     * turned out to be sanitised away (which includes being nothing but a
+     * credential this attempt sent, once {@link #scrubCredentials} has redacted
+     * it).
      */
-    private String withServerText(IrcServer server, String reason) {
+    private String withServerText(IrcServer server, ConnectRequest request, String reason) {
         String raw = capturedError != null ? capturedError : capturedNotice;
-        String sanitised = ServerText.sanitise(raw);
+        String sanitised = ServerText.sanitise(scrubCredentials(raw, request));
         if (sanitised == null) {
             return reason;
         }
         return server.name() + " said: " + sanitised + ". " + reason;
+    }
+
+    private static final String REDACTED = "[redacted]";
+
+    /**
+     * A server can echo back exactly what it was sent, and a bad password or SASL
+     * password is exactly the sort of thing that shows up in an ERROR or NOTICE
+     * explaining why registration failed ("bad password oauth:sekrit-XYZ" is the
+     * shape Twitch used in production). Every credential this attempt configured is
+     * redacted here, before {@link ServerText#sanitise} ever sees the text, so none
+     * of it can reach the browser, a log, or an exception message. Null or empty
+     * values are skipped, since {@link String#replace} would otherwise do nothing
+     * useful with them anyway.
+     */
+    private static String scrubCredentials(String raw, ConnectRequest request) {
+        if (raw == null) {
+            return null;
+        }
+        String scrubbed = redact(raw, request.password());
+        scrubbed = redact(scrubbed, request.saslPassword());
+        String password = request.password();
+        if (hasText(password) && password.regionMatches(true, 0, "oauth:", 0, 6)) {
+            // The token half of "oauth:<token>" is worth redacting on its own too:
+            // a server that only echoes the token, without the "oauth:" prefix the
+            // full-password redaction above matches, must not leak it either.
+            scrubbed = redact(scrubbed, password.substring("oauth:".length()));
+        }
+        return scrubbed;
+    }
+
+    private static String redact(String text, String value) {
+        if (value == null || value.isEmpty()) {
+            return text;
+        }
+        return text.replace(value, REDACTED);
     }
 
     private static final String CREDENTIAL_NOT_VALID_REASON =
@@ -507,6 +545,10 @@ public class IrcSession {
             try {
                 message = IRCMessageParser.parse(line);
             } catch (IRCParseException e) {
+                // Deliberately silent: an unparseable inbound line is simply not a
+                // reason we can quote, not a fault of ours to report anywhere. The
+                // raw pane above already shows the line itself, and irc-client's own
+                // handlers separately decide whether it is otherwise fatal.
                 return;
             }
             String trailing = message.getTrailing();

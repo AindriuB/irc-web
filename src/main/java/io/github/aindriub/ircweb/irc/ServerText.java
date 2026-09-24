@@ -6,6 +6,17 @@ package io.github.aindriub.ircweb.irc;
  * <p>A NOTICE or ERROR's trailing text is otherwise untrusted: it can carry mIRC
  * formatting codes (bold, colour, ...), which are C0 control characters, arbitrary
  * whitespace, or be far longer than anything worth putting next to a form.
+ *
+ * <p>irc-client 1.2.1's {@code IRCFormatting.strip()} was considered here instead of
+ * plain control-character removal, since it understands the {@code \u0003}/{@code
+ * \u0004} colour specs rather than treating each character alone. It was not used:
+ * for a well-formed spec such as {@code \u000304,01} it consumes the foreground and
+ * background digits along with the control character itself, so {@code
+ * "\u000304,01Login"} comes back as {@code "Login"}. That loses real content, not
+ * decoration — the digits are exactly as readable as the rest of the sentence once
+ * the control character is gone, and this class does not know whether a run of
+ * digits after {@code \u0003} was ever meant as a colour code at all. Removing only
+ * the control character itself, below, leaves {@code "04,01Login"}.
  */
 final class ServerText {
 

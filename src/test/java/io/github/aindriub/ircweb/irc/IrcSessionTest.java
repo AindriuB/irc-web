@@ -353,11 +353,11 @@ class IrcSessionTest {
         String dirty = "\u0003\u0002Closing Link: " + tail;
         Thread fakeIrcServer = new Thread(() -> {
             try (Socket socket = serverSocket.accept()) {
-                noticeThenClose(socket, dirty);
+                errorThenClose(socket, dirty);
             } catch (IOException e) {
                 // The assertion below times out and reports the failure.
             }
-        }, "fake-irc-server-dirty-notice");
+        }, "fake-irc-server-dirty-error");
         fakeIrcServer.setDaemon(true);
         fakeIrcServer.start();
 
@@ -369,12 +369,62 @@ class IrcSessionTest {
             assertEquals("disconnected", last.state());
             assertFalse(last.detail().contains("\u0003"));
             assertFalse(last.detail().contains("\u0002"));
+            String fixedReason =
+                    "The server refused the connection. Check the server settings and try again.";
+            assertTrue(last.detail().contains(fixedReason),
+                    "expected the fixed reason too, got: " + last.detail());
             String quoted = last.detail().substring(
                     (server.name() + " said: ").length());
-            int quoteEnd = quoted.indexOf(". The connection closed");
+            int quoteEnd = quoted.indexOf(". " + fixedReason);
             String quotedPart = quoteEnd < 0 ? quoted : quoted.substring(0, quoteEnd);
             assertTrue(quotedPart.length() <= 200,
                     "quoted part too long (" + quotedPart.length() + "): " + quotedPart);
+        }
+    }
+
+    @Test
+    @DisplayName("a password the server echoes back in an ERROR is redacted before it ever "
+            + "reaches the failure reason")
+    void aPasswordEchoedInAnErrorIsRedactedFromTheFailureReason() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", "oauth:sekrit-XYZ", null,
+                null, List.of());
+
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket socket = serverSocket.accept()) {
+                errorThenClose(socket, "Closing Link: bad password oauth:sekrit-XYZ");
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-echoes-password");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        assertThrows(IllegalStateException.class, () -> session.connect(server, request));
+
+        synchronized (events) {
+            OutboundEvent last = events.get(events.size() - 1);
+            assertEquals("status", last.type());
+            assertEquals("disconnected", last.state());
+            assertTrue(last.detail().contains("[redacted]"),
+                    "expected the echoed password to be redacted, got: " + last.detail());
+            assertFalse(last.detail().contains("sekrit-XYZ"),
+                    "the password leaked into the failure reason: " + last.detail());
+
+            // Only the status event's detail is scrubbed. The raw pane is a
+            // deliberate, separate buffer of exactly what the server sent (see the
+            // class javadoc on RawForwarder) and is not in scope here.
+            for (OutboundEvent event : events) {
+                if (!"status".equals(event.type())) {
+                    continue;
+                }
+                String payload = JSON.writeValueAsString(event);
+                assertFalse(payload.contains("sekrit-XYZ"),
+                        "a status event leaked the password: " + payload);
+            }
         }
     }
 
@@ -632,11 +682,19 @@ class IrcSessionTest {
     }
 
     /**
-     * Reads NICK and USER, then answers with a bare ERROR, the shape irc-client
-     * 1.2.1's {@code RegistrationHandler} maps to a {@link
-     * io.github.aindriub.irc.client.handler.ServerRefusedException}.
+     * A realistic ERROR, in the shape an ergo-style server sends rather than a
+     * bare "Closing Link": a client identifier and a parenthesised reason.
      */
     private static void errorDuringRegistration(Socket socket) throws IOException {
+        errorThenClose(socket, "Closing Link: nick[host] (Bad Password)");
+    }
+
+    /**
+     * Reads NICK and USER, then answers with an ERROR whose trailing parameter is
+     * {@code text}, the shape irc-client 1.2.1's {@code RegistrationHandler} maps
+     * to a {@link io.github.aindriub.irc.client.handler.ServerRefusedException}.
+     */
+    private static void errorThenClose(Socket socket, String text) throws IOException {
         socket.setSoTimeout(5000);
         BufferedReader in = new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
@@ -649,7 +707,7 @@ class IrcSessionTest {
                 seen++;
             }
         }
-        out.write("ERROR :Closing Link\r\n".getBytes(StandardCharsets.UTF_8));
+        out.write(("ERROR :" + text + "\r\n").getBytes(StandardCharsets.UTF_8));
         out.flush();
     }
 

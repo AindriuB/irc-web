@@ -32,6 +32,15 @@ class ServerTextTest {
     }
 
     @Test
+    void colourDigitsAfterTheColourCodeSurvive() {
+        // Only \u0003 itself is a control character; the digits and comma that
+        // would form a colour spec to a real IRC client are ordinary text here,
+        // since this class never tries to tell a genuine colour spec apart from a
+        // sentence that happens to start with digits.
+        assertEquals("04,01Login", ServerText.sanitise("\u000304,01Login"));
+    }
+
+    @Test
     void removesC1ControlCharacters() {
         assertEquals("ab", ServerText.sanitise("a\u0085b"));
     }
