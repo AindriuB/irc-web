@@ -48,22 +48,29 @@ public class IrcSession {
             "372", "375", "376", "422");
 
     /**
-     * The library default backoff (1 s initial, 60 s max), kept explicit here rather
-     * than left implicit so it reads next to {@link #RECONNECT_MAX_ATTEMPTS}, the one
-     * production actually changes.
+     * Production's own backoff, not the library's default (1 s initial, 60 s max):
+     * a bouncer is meant to ride out a broadband outage or a maintenance window,
+     * not just a blip, so the ceiling is 5 minutes rather than 1. Kept explicit
+     * here rather than left implicit so it reads next to
+     * {@link #RECONNECT_MAX_ATTEMPTS}, which is worked out against these two
+     * values.
      */
     private static final long DEFAULT_RECONNECT_INITIAL_DELAY_MILLIS = 1000;
-    private static final long DEFAULT_RECONNECT_MAX_DELAY_MILLIS = 60000;
+    private static final long DEFAULT_RECONNECT_MAX_DELAY_MILLIS = 300000;
 
     /**
      * Finite in production, unlike the library's own default of 0 (retry forever):
      * "gave up" has to be reachable, not theoretical. With the delays above
-     * (doubling from 1 s, capped at 60 s), 10 attempts wait 1+2+4+8+16+32+60+60+60+60
-     * = 303 s, about five minutes, before giving up — long enough to ride out a
-     * network blip or a server restart, short enough that a session which really has
-     * lost its server does not sit "reconnecting" forever.
+     * (doubling from 1 s, capped at 300 s), the first 9 attempts are still
+     * doubling and add up to 1+2+4+8+16+32+64+128+256 = 511 s; attempt 10 would be
+     * 512 s, past the 300 s cap, so from there every attempt waits the full 300 s.
+     * The remaining 32-9 = 23 attempts at that cap add 23*300 = 6900 s, for a
+     * total of 511+6900 = 7411 s, about 2 hours 3 minutes, before giving up —
+     * long enough to ride out a network blip, a server restart, or an ISP outage,
+     * short enough that a session which really has lost its server does not sit
+     * "reconnecting" forever.
      */
-    private static final int RECONNECT_MAX_ATTEMPTS = 10;
+    private static final int RECONNECT_MAX_ATTEMPTS = 32;
 
     private final Consumer<OutboundEvent> sink;
     private final AtomicBoolean running = new AtomicBoolean();
