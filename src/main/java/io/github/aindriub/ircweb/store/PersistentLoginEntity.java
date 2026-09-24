@@ -1,6 +1,6 @@
 package io.github.aindriub.ircweb.store;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -17,6 +17,12 @@ import jakarta.persistence.Table;
  * uses everywhere else - instead of the token repository creating it with
  * {@code setCreateTableOnStartup(true)}, which fails the second time the
  * application starts because the table is already there.
+ *
+ * <p>{@code lastUsed} is a {@link LocalDateTime}, not an {@link java.time.Instant}:
+ * Hibernate maps an {@code Instant} to {@code timestamp with time zone}, but
+ * {@code JdbcTokenRepositoryImpl}'s own SQL declares the column a plain
+ * {@code timestamp}. A {@code LocalDateTime} matches that, so the table Hibernate
+ * creates is the one the repository's queries expect.
  */
 @Entity
 @Table(name = "persistent_logins")
@@ -33,7 +39,7 @@ public class PersistentLoginEntity {
     private String token;
 
     @Column(name = "last_used", nullable = false)
-    private Instant lastUsed;
+    private LocalDateTime lastUsed;
 
     protected PersistentLoginEntity() {
     }
@@ -41,5 +47,5 @@ public class PersistentLoginEntity {
     public String getUsername() { return username; }
     public String getSeries() { return series; }
     public String getToken() { return token; }
-    public Instant getLastUsed() { return lastUsed; }
+    public LocalDateTime getLastUsed() { return lastUsed; }
 }

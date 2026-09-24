@@ -2,6 +2,7 @@ package io.github.aindriub.ircweb.security;
 
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.Base64;
 
 import javax.sql.DataSource;
@@ -139,6 +140,14 @@ public class SecurityConfig {
      * encoding, per {@code AbstractRememberMeServices}, is
      * {@code base64(urlencode(series) + ":" + urlencode(token))}, with the
      * base64 padding trimmed.
+     *
+     * <p>The series alone is not proof of anything - it is the public half of the
+     * cookie, visible to anyone who can see the Set-Cookie header, e.g. in a
+     * shared proxy log. Only the token is secret, so this checks it against the
+     * stored row (in constant time, since this is still a credential comparison)
+     * before treating the cookie as good for anything. A mismatch, or a cookie
+     * that does not decode at all, is answered with "nothing to delete" rather
+     * than an error.
      */
     private static String usernameFromRememberMeCookie(HttpServletRequest request,
             PersistentTokenRepository tokenRepository) {
@@ -157,12 +166,18 @@ public class SecurityConfig {
                 }
                 byte[] bytes = Base64.getDecoder().decode(value);
                 String[] parts = new String(bytes, StandardCharsets.UTF_8).split(":");
-                if (parts.length < 1) {
+                if (parts.length < 2) {
                     continue;
                 }
                 String series = URLDecoder.decode(parts[0], StandardCharsets.UTF_8);
+                String presentedToken = URLDecoder.decode(parts[1], StandardCharsets.UTF_8);
                 PersistentRememberMeToken token = tokenRepository.getTokenForSeries(series);
-                if (token != null) {
+                if (token == null) {
+                    continue;
+                }
+                byte[] presented = presentedToken.getBytes(StandardCharsets.UTF_8);
+                byte[] stored = token.getTokenValue().getBytes(StandardCharsets.UTF_8);
+                if (MessageDigest.isEqual(presented, stored)) {
                     return token.getUsername();
                 }
             } catch (RuntimeException e) {

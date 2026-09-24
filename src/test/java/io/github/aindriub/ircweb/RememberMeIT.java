@@ -6,6 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -221,6 +225,83 @@ class RememberMeIT {
                 new HttpEntity<>(rememberMeOnlyHeaders(rememberMeCookie)), Map.class);
         assertEquals(HttpStatus.UNAUTHORIZED, me.getStatusCode(),
                 "the old remember-me cookie should no longer authenticate anything");
+    }
+
+    @Test
+    @DisplayName("the right series with the wrong token deletes nothing")
+    void wrongTokenWithRightSeriesDeletesNothing() {
+        String rememberMeCookie = logInAndGetRememberMeCookie();
+        JdbcTemplate jdbc = new JdbcTemplate(dataSource);
+        int before = rowCountForTester(jdbc);
+        assertTrue(before > 0, "expected the login to have left a row in persistent_logins");
+
+        String series = decodeRememberMeCookie(rememberMeCookie)[0];
+        String forgedCookie = encodeRememberMeCookie(series, "not-the-real-token");
+
+        RestTemplate rest = TestHttp.anonymousNoRedirects(port);
+
+        // CSRF primed with the real cookie, so the only thing under test is the
+        // remember-me cookie sent with the logout call itself.
+        ResponseEntity<Map> primer = rest.exchange("/api/me", HttpMethod.GET,
+                new HttpEntity<>(rememberMeOnlyHeaders(rememberMeCookie)), Map.class);
+        String csrfToken = cookieValue(primer.getHeaders().get(HttpHeaders.SET_COOKIE),
+                "XSRF-TOKEN");
+        assertNotNull(csrfToken);
+
+        HttpHeaders logoutHeaders = new HttpHeaders();
+        logoutHeaders.add(HttpHeaders.COOKIE,
+                "remember-me=" + forgedCookie + "; XSRF-TOKEN=" + csrfToken);
+        logoutHeaders.add("X-XSRF-TOKEN", csrfToken);
+        ResponseEntity<String> logout = rest.exchange("/api/logout", HttpMethod.POST,
+                new HttpEntity<>(logoutHeaders), String.class);
+
+        assertFalse(logout.getStatusCode().is5xxServerError(),
+                "a forged token must not blow up the logout call, was: "
+                        + logout.getStatusCode());
+        assertEquals(before, rowCountForTester(jdbc),
+                "knowing only the series must not be enough to delete another "
+                        + "session's persistent_logins rows");
+    }
+
+    @Test
+    @DisplayName("a malformed remember-me cookie does not crash the logout call")
+    void malformedRememberMeCookieDoesNotErrorLogout() {
+        RestTemplate rest = TestHttp.anonymousNoRedirects(port);
+        ResponseEntity<String> page = rest.getForEntity("/login.html", String.class);
+        String xsrfCookie = page.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
+        String csrfToken = xsrfCookie.split(";")[0].split("=", 2)[1];
+
+        HttpHeaders logoutHeaders = new HttpHeaders();
+        logoutHeaders.add(HttpHeaders.COOKIE,
+                "remember-me=not-valid-base64!!!; XSRF-TOKEN=" + csrfToken);
+        logoutHeaders.add("X-XSRF-TOKEN", csrfToken);
+
+        ResponseEntity<String> logout = rest.exchange("/api/logout", HttpMethod.POST,
+                new HttpEntity<>(logoutHeaders), String.class);
+
+        assertFalse(logout.getStatusCode().is5xxServerError(),
+                "a malformed cookie must not crash logout, was: " + logout.getStatusCode());
+    }
+
+    /** [series, token], both already URL-decoded. */
+    private static String[] decodeRememberMeCookie(String cookieValue) {
+        String value = cookieValue;
+        while (value.length() % 4 != 0) {
+            value = value + "=";
+        }
+        byte[] bytes = Base64.getDecoder().decode(value);
+        String[] parts = new String(bytes, StandardCharsets.UTF_8).split(":");
+        return new String[] {
+            URLDecoder.decode(parts[0], StandardCharsets.UTF_8),
+            URLDecoder.decode(parts[1], StandardCharsets.UTF_8)
+        };
+    }
+
+    /** The same encoding {@code AbstractRememberMeServices} uses for the cookie. */
+    private static String encodeRememberMeCookie(String series, String token) {
+        String joined = URLEncoder.encode(series, StandardCharsets.UTF_8) + ":"
+                + URLEncoder.encode(token, StandardCharsets.UTF_8);
+        return Base64.getEncoder().encodeToString(joined.getBytes(StandardCharsets.UTF_8));
     }
 
     private static int rowCountForTester(JdbcTemplate jdbc) {
