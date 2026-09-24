@@ -86,6 +86,32 @@ class IrcSessionTest {
     }
 
     @Test
+    @DisplayName("a nick with a space is refused before connecting when it is also used as the "
+            + "SASL username")
+    void refusesANickWithASpaceWhenUsedAsTheSaslUsername() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        // No saslUsername: connect() falls back to the nick, which is invalid as a
+        // SASL username (it contains a space).
+        ConnectRequest request = new ConnectRequest("local", "a b", null, null, "saslpass",
+                List.of());
+
+        IllegalArgumentException thrown = assertThrows(IllegalArgumentException.class,
+                () -> session.connect(server, request));
+        assertEquals("The nick cannot contain spaces or start with ':' when it is also the "
+                + "SASL username", thrown.getMessage());
+
+        // The check happens before IRCBot.builder() is ever reached, so the fake
+        // server never sees a connection attempt at all.
+        serverSocket.setSoTimeout(2000);
+        assertThrows(SocketTimeoutException.class, serverSocket::accept,
+                "the rejected nick must never reach a real socket");
+    }
+
+    @Test
     @DisplayName("a connect the server rejects stops the bot instead of leaving it reconnecting")
     void stopsTheBotOnARejectedRegistration() throws Exception {
         serverSocket = new ServerSocket(0);
@@ -231,7 +257,8 @@ class IrcSessionTest {
     }
 
     @Test
-    @DisplayName("an ERROR during registration maps to a fixed, credential-free server-refusal reason")
+    @DisplayName("an ERROR during registration maps to a fixed, credential-free server-refusal "
+            + "reason, prefixed with what the server itself said")
     void anErrorDuringRegistrationMapsToAServerRefusalReason() throws Exception {
         serverSocket = new ServerSocket(0);
         List<OutboundEvent> events = new ArrayList<>();
@@ -256,22 +283,175 @@ class IrcSessionTest {
             OutboundEvent last = events.get(events.size() - 1);
             assertEquals("status", last.type());
             assertEquals("disconnected", last.state());
-            assertEquals(
-                    "The server refused the connection. Check the server settings and try again.",
-                    last.detail());
-            // Only the status event's own detail is a failure reason, and that is
-            // what must never carry the server's wording. The raw pane is a
-            // deliberate, separate buffer of exactly what the server sent (see the
-            // class javadoc on RawForwarder) and is not in scope here.
+            // Task 02: the ERROR's own trailing text, captured while the attempt was
+            // in progress, now leads the detail, with the fixed reason kept after it.
+            assertTrue(last.detail().startsWith(server.name() + " said: Closing Link"),
+                    "expected the server's own wording first, got: " + last.detail());
+            assertTrue(last.detail().contains(
+                    "The server refused the connection. Check the server settings and try again."),
+                    "expected the fixed reason too, got: " + last.detail());
+        }
+    }
+
+    @Test
+    @DisplayName("a NOTICE seen before the connection closes is quoted in the failure reason")
+    void aNoticeBeforeAnUnexpectedCloseIsQuotedInTheFailureReason() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", "oauth:sekrit-XYZ", null,
+                null, List.of());
+
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket socket = serverSocket.accept()) {
+                noticeThenClose(socket, "Login unsuccessful");
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-notice");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> session.connect(server, request));
+        // The fixed reason irc-client's own "Connection closed before registration
+        // completed" maps to, unaffected by this task.
+        String fixedReason =
+                "The connection closed before registration finished. Try again.";
+        assertEquals(fixedReason, thrown.getMessage());
+
+        synchronized (events) {
+            OutboundEvent last = events.get(events.size() - 1);
+            assertEquals("status", last.type());
+            assertEquals("disconnected", last.state());
+            assertTrue(last.detail().startsWith(server.name() + " said: Login unsuccessful"),
+                    "expected the server's own wording first, got: " + last.detail());
+            assertTrue(last.detail().contains(fixedReason),
+                    "expected the fixed reason too, got: " + last.detail());
+
             for (OutboundEvent event : events) {
-                if (!"status".equals(event.type())) {
-                    continue;
-                }
                 String payload = JSON.writeValueAsString(event);
-                assertFalse(payload.contains("Closing Link"),
-                        "the server's own wording must not reach a status event: " + payload);
+                assertFalse(payload.contains("sekrit-XYZ"),
+                        "an event leaked the token: " + payload);
             }
         }
+    }
+
+    @Test
+    @DisplayName("an ERROR's trailing text, control characters and length included, reaches the "
+            + "detail sanitised")
+    void anErrorWithControlCharactersAndALongTailIsSanitisedInTheFailureReason() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
+                List.of());
+
+        String tail = "x".repeat(1000);
+        String dirty = "\u0003\u0002Closing Link: " + tail;
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket socket = serverSocket.accept()) {
+                noticeThenClose(socket, dirty);
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-dirty-notice");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        assertThrows(IllegalStateException.class, () -> session.connect(server, request));
+
+        synchronized (events) {
+            OutboundEvent last = events.get(events.size() - 1);
+            assertEquals("status", last.type());
+            assertEquals("disconnected", last.state());
+            assertFalse(last.detail().contains("\u0003"));
+            assertFalse(last.detail().contains("\u0002"));
+            String quoted = last.detail().substring(
+                    (server.name() + " said: ").length());
+            int quoteEnd = quoted.indexOf(". The connection closed");
+            String quotedPart = quoteEnd < 0 ? quoted : quoted.substring(0, quoteEnd);
+            assertTrue(quotedPart.length() <= 200,
+                    "quoted part too long (" + quotedPart.length() + "): " + quotedPart);
+        }
+    }
+
+    @Test
+    @DisplayName("a connect with no NOTICE or ERROR seen gives exactly the reason it always gave")
+    void noCapturedServerTextLeavesTheReasonUnchanged() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
+                List.of());
+
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket first = serverSocket.accept()) {
+                rejectRegistration(first);
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-plain-reject");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        IllegalStateException thrown = assertThrows(IllegalStateException.class,
+                () -> session.connect(server, request));
+        assertTrue(thrown.getMessage().startsWith("The server rejected registration"));
+
+        synchronized (events) {
+            OutboundEvent last = events.get(events.size() - 1);
+            assertEquals("status", last.type());
+            assertEquals("disconnected", last.state());
+            assertEquals(thrown.getMessage(), last.detail());
+            assertFalse(last.detail().contains(" said: "),
+                    "no server text was seen, so nothing should be quoted: " + last.detail());
+        }
+    }
+
+    @Test
+    @DisplayName("a notice after registration completes still arrives as an ordinary notice event")
+    void aNoticeAfterRegistrationIsAnOrdinaryNoticeEvent() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
+                List.of());
+
+        CountDownLatch noticeSent = new CountDownLatch(1);
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket socket = serverSocket.accept()) {
+                acceptRegistrationThenNotice(socket, "webtest", "Welcome to the network",
+                        noticeSent);
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-post-ready-notice");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        assertDoesNotThrow(() -> session.connect(server, request));
+        assertTrue(noticeSent.await(10, TimeUnit.SECONDS),
+                "the fake server never got to send its post-registration notice");
+
+        long deadline = System.currentTimeMillis() + 10_000;
+        boolean sawNotice;
+        do {
+            synchronized (events) {
+                sawNotice = events.stream().anyMatch(e -> "notice".equals(e.type())
+                        && "Welcome to the network".equals(e.text()));
+            }
+            if (!sawNotice) {
+                Thread.sleep(50);
+            }
+        } while (!sawNotice && System.currentTimeMillis() < deadline);
+        assertTrue(sawNotice, "expected the post-registration NOTICE as an ordinary notice event");
+
+        session.disconnect();
     }
 
     @Test
@@ -280,7 +460,14 @@ class IrcSessionTest {
     void onReadyIsSafeAfterAReconnectOnTheConnectionEventThread() throws Exception {
         serverSocket = new ServerSocket(0);
         List<OutboundEvent> events = new ArrayList<>();
-        IrcSession session = new IrcSession(synchronizedSink(events));
+        // Parallel to events, index for index: which thread delivered each one.
+        List<String> threadNames = new ArrayList<>();
+        IrcSession session = new IrcSession(event -> {
+            synchronized (events) {
+                events.add(event);
+                threadNames.add(Thread.currentThread().getName());
+            }
+        });
         // Short enough that the test does not wait out irc-client's real default
         // backoff (1000 ms initial), long enough not to race the fake server below.
         session.setReconnectBackoffForTest(50, 100);
@@ -350,11 +537,20 @@ class IrcSessionTest {
                 "expected a channels event after the second ready status");
 
         synchronized (events) {
-            OutboundEvent secondReady = events.stream()
-                    .filter(e -> "status".equals(e.type()) && "ready".equals(e.state()))
-                    .reduce((first, second) -> second)
-                    .orElseThrow();
+            int secondReadyIndex = -1;
+            for (int i = 0; i < events.size(); i++) {
+                OutboundEvent event = events.get(i);
+                if ("status".equals(event.type()) && "ready".equals(event.state())) {
+                    secondReadyIndex = i;
+                }
+            }
+            OutboundEvent secondReady = events.get(secondReadyIndex);
             assertEquals("webtest", secondReady.nick());
+            // The whole point of this test: after a reconnect, onReady runs on
+            // irc-client's own connection-event thread rather than a Netty loop.
+            assertTrue(threadNames.get(secondReadyIndex).startsWith("irc-connection-events"),
+                    "expected the connection-event thread, got: "
+                            + threadNames.get(secondReadyIndex));
         }
 
         session.disconnect();
@@ -455,6 +651,56 @@ class IrcSessionTest {
         }
         out.write("ERROR :Closing Link\r\n".getBytes(StandardCharsets.UTF_8));
         out.flush();
+    }
+
+    /**
+     * Reads NICK and USER, sends a NOTICE with {@code text} as its trailing
+     * parameter, then closes the connection without ever completing registration,
+     * the shape production saw from Twitch on a bad token.
+     */
+    private static void noticeThenClose(Socket socket, String text) throws IOException {
+        socket.setSoTimeout(5000);
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        OutputStream out = socket.getOutputStream();
+        String line;
+        int seen = 0;
+        while (seen < 2 && (line = in.readLine()) != null) {
+            if (line.regionMatches(true, 0, "NICK", 0, 4)
+                    || line.regionMatches(true, 0, "USER", 0, 4)) {
+                seen++;
+            }
+        }
+        out.write((":tmi.twitch.tv NOTICE * :" + text + "\r\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
+    /**
+     * Completes registration like {@link #acceptRegistration}, sends a NOTICE right
+     * afterwards and signals {@code notified}, then blocks until the client closes,
+     * so a test can prove a NOTICE seen after {@code onReady} is treated as an
+     * ordinary notice rather than being captured for a failure reason.
+     */
+    private static void acceptRegistrationThenNotice(Socket socket, String nick, String text,
+            CountDownLatch notified) throws IOException {
+        socket.setSoTimeout(5000);
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        OutputStream out = socket.getOutputStream();
+        String line;
+        int seen = 0;
+        while (seen < 2 && (line = in.readLine()) != null) {
+            if (line.regionMatches(true, 0, "NICK", 0, 4)
+                    || line.regionMatches(true, 0, "USER", 0, 4)) {
+                seen++;
+            }
+        }
+        out.write((":srv 001 " + nick + " :Welcome\r\n").getBytes(StandardCharsets.UTF_8));
+        out.write((":srv NOTICE " + nick + " :" + text + "\r\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+        notified.countDown();
+        socket.setSoTimeout(0);
+        in.readLine();
     }
 
     private static void rejectRegistration(Socket socket) throws IOException {
