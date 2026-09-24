@@ -20,15 +20,18 @@ form. This closes the incident where a bad Twitch password left an orphaned
 bot reconnecting every 60s for hours (see HISTORY).
 
 ### Take irc-client 1.2.x
-1.2.0 was dropped unpublished on the Central Portal. 1.2.1 — which folds in
-1.2.0's fixes and adds the exception-message secret-leak fix that caused the
-Twitch-password incident (see HISTORY) — is staged and awaiting the
-maintainer's Publish click. irc-web moves to 1.2.1 once it's out. 1.2.1 also
-brings connection-state events (`onDisconnected`, `onReconnecting`,
-`onGaveUp`); once irc-web is on it, plan a "reconnecting…" status in the UI
-driven by those events — a new task, not part of the version bump.
-**Blocked by:** irc-client 1.2.1 not yet released (irc-web pins 1.1.0 in
-pom.xml).
+1.2.1 is published and irc-web now runs on it (pom.xml pin moved from 1.1.0;
+1.2.0 was never published). `ServerRefusedException` and the credential
+builder's `IllegalArgumentException` map by type to fixed, credential-free
+reasons, and the UI now shows a `reconnecting` state (warn-coloured, input and
+Say disabled, Stop enabled, Connect re-enabled once the bot gives up) — see
+HISTORY. Two follow-ons are in flight: task 02 (surface the server's own
+NOTICE/ERROR text on a failed registration) and task 03 (drive that
+`reconnecting`/gave-up UI from irc-client 1.2.1's `onDisconnected`,
+`onReconnecting`, `onGaveUp` events; task 04 built the UI side against a
+fixed contract, 03 is the wiring). 03 depends on 02.
+**Later, small:** `CredentialRules`' javadoc still says "mirroring irc-client
+1.1.0"; needs a one-line update to 1.2.1 once 02/03 land.
 
 (Session-expiry — the socket dying silently 30 minutes after page load — is
 fixed; see HISTORY.)

@@ -17,6 +17,42 @@ in the same commit.
 **Cost:** <what was hard, what was tried and abandoned, what not to retry.>
 -->
 
+## 2026-09-24 — irc-client 1.2.1 is live, and the UI has a reconnecting state
+
+irc-web now pins irc-client 1.2.1 (1.2.0 was dropped unpublished on the
+Central Portal). `ServerRefusedException` and the credential builder's
+`IllegalArgumentException` both map by exception type to the same fixed,
+credential-free reasons the browser already showed — no message text from
+irc-client reaches the client. A test-only, package-private reconnect-backoff
+seam was added to `IrcSession` so tests can shrink the wait between attempts;
+production's reconnect defaults are untouched. A test now proves
+`Forwarder.onReady` still runs correctly after a reconnect, which on 1.2.1
+arrives on irc-client's own `irc-connection-events` thread rather than the
+caller's. Separately, app.js now treats a `reconnecting` status the way it
+already treats `connecting`: the message input and Say button disabled, Stop
+enabled, the status line coloured with `var(--warn)`; Connect stays enabled
+throughout and is usable again once a `gave up` disconnect arrives. Sending is
+deliberately disabled while reconnecting rather than queued — a queued line
+could land minutes later in a channel the bot has not rejoined yet, or be
+lost silently if it gives up. Shared JS test scaffolding for socket/status
+tests now lives in `src/test/js/helpers.mjs`.
+
+This lands the version bump and the UI half of the plan noted when 1.2.1 was
+still pending (see PLAN.md). The two events that actually drive the new UI
+state — irc-client's `onDisconnected`/`onReconnecting`/`onGaveUp` — are not
+wired up yet; that is task 03, blocked on task 02 (showing the server's own
+NOTICE/ERROR text on a failed registration), both still open.
+
+**Cost:** none on the implementation side for either piece; both passed
+review on the first round with no rework. One gap fell out of reviewing the
+1.2.1 credential mapping: the nick, when reused as the SASL username,
+is never checked against the SASL-username rule, so a nick like `a b` fails
+inside irc-client with a message pointing at the wrong field. Folded into
+task 02 rather than fixed here since it touches the same `IrcSession`
+validation this task already changed. `CredentialRules`' javadoc still
+says "mirroring irc-client 1.1.0" — cosmetic, left for whichever of 02/03
+touches that file next.
+
 ## 2026-09-24 — A failed connect now stops the bot instead of orphaning it
 
 Closes the incident this whole credential-safety line of work was for: a bad
