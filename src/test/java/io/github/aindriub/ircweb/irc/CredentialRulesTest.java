@@ -35,7 +35,7 @@ class CredentialRulesTest {
     @ValueSource(strings = {"a\rb", "a\nb", "a\0b"})
     @DisplayName("a SASL password with a line break is rejected")
     void saslPasswordRejectsControlCharacters(String value) {
-        assertEquals(Optional.of("The SASL password cannot contain spaces or line breaks"),
+        assertEquals(Optional.of("The SASL password cannot contain line breaks"),
                 CredentialRules.checkSaslPassword(value));
     }
 

@@ -103,7 +103,7 @@ class ProfileValidationIT {
                 Map.class);
 
         assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
-        assertEquals("The SASL password cannot contain spaces or line breaks",
+        assertEquals("The SASL password cannot contain line breaks",
                 response.getBody().get("error"));
         assertFalse(String.valueOf(response.getBody()).contains("has\nbreak"));
     }

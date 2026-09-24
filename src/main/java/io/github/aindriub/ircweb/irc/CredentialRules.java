@@ -29,7 +29,7 @@ public final class CredentialRules {
     private static final String SERVER_PASSWORD_MESSAGE =
             "The server password cannot contain spaces or line breaks";
     private static final String SASL_PASSWORD_MESSAGE =
-            "The SASL password cannot contain spaces or line breaks";
+            "The SASL password cannot contain line breaks";
     private static final String SASL_USERNAME_MESSAGE =
             "The SASL username cannot contain spaces";
     private static final String SERVER_PASSWORD_LEADING_COLON_MESSAGE =
