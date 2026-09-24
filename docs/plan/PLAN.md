@@ -11,24 +11,22 @@ than no plan.
 
 ## Now
 
-### Credential safety
-Task 01 (reject unusable credentials on save) and task 03 (show credential
-and connect errors by the form) have landed. Task 02 (task/02, stop the bot
-on connect failure instead of orphaning it, plus pre-connect credential
-checks) is next and matters most of what's open here: it's the fix for the
-incident where a bad Twitch password left an orphaned bot reconnecting every
-60s for hours (see HISTORY).
+### Credential safety — done
+Tasks 01, 02 and 03 have all landed: unusable credentials are rejected on
+save, a connect failure stops the bot it built instead of orphaning it (with
+a pre-connect credential check and a fixed, cause-typed reason to the
+browser), and app.js shows those save- and connect-failure reasons by the
+form. This closes the incident where a bad Twitch password left an orphaned
+bot reconnecting every 60s for hours (see HISTORY).
 
 ### Take irc-client 1.2.x
-1.2.0 (TLS-refusal message fix #39, reconnect-throttle fix plus
-`ServerRefusedException` #40) is staged on the Central Portal awaiting the
-maintainer's Publish click. 1.2.1, which fixes the exception-message secret
-leak that caused the Twitch-password incident (see HISTORY), is ready to cut
-behind it. irc-web should take 1.2.1, not 1.2.0, once it's out — 1.2.0 alone
-still carries the leak. 1.2.x also brings connection-state events
-(`onDisconnected`, `onReconnecting`, `onGaveUp`) that irc-web should surface
-as a "reconnecting…" status in the UI — that needs its own task once it
-ships, not part of this one.
+1.2.0 was dropped unpublished on the Central Portal. 1.2.1 — which folds in
+1.2.0's fixes and adds the exception-message secret-leak fix that caused the
+Twitch-password incident (see HISTORY) — is staged and awaiting the
+maintainer's Publish click. irc-web moves to 1.2.1 once it's out. 1.2.1 also
+brings connection-state events (`onDisconnected`, `onReconnecting`,
+`onGaveUp`); once irc-web is on it, plan a "reconnecting…" status in the UI
+driven by those events — a new task, not part of the version bump.
 **Blocked by:** irc-client 1.2.1 not yet released (irc-web pins 1.1.0 in
 pom.xml).
 
@@ -36,6 +34,15 @@ pom.xml).
 fixed; see HISTORY.)
 
 ## Next
+
+### Harden the connect-failure path further
+Three small gaps parked by task 02's review, none blocking: (a) tests assert
+`running` resets on a failed connect but never that `stop()` was actually
+called on the built bot; (b) an `SSLHandshakeException` arriving as a direct
+connect error (not wrapped) is not mapped to the TLS-handshake reason; (c)
+`IrcSession.stopBuilt` only catches `RuntimeException` around `stop()`, so an
+`Error` thrown there would replace the original failure instead of being
+swallowed alongside it.
 
 ### Theme switcher
 The blue branding (tasks 01-02) has landed, fixed and non-switchable. The theme

@@ -17,6 +17,33 @@ in the same commit.
 **Cost:** <what was hard, what was tried and abandoned, what not to retry.>
 -->
 
+## 2026-09-24 — A failed connect now stops the bot instead of orphaning it
+
+Closes the incident this whole credential-safety line of work was for: a bad
+Twitch password left an orphaned bot reconnecting every 60s for hours,
+leaking the token into the container log on each attempt. `IrcSession.connect`
+now checks the effective `password`, `saslPassword` and `saslUsername`
+against `CredentialRules` before opening a socket, so a stored-bad or
+typed-bad credential is refused before a bot is even built. Every failure
+path after the bot is built — any `Throwable`, not just the exceptions
+irc-client 1.1.0 is documented to throw — calls `stop()` on that bot, held in
+a local variable, before the exception leaves `connect`; `IrcWebSocketHandler`'s
+connect `catch` was widened so `registry.end` runs even for an `Error`. The
+reason reaching the browser is chosen by the cause's *type*, from a fixed
+small set (credential/config refused, TLS handshake failed, server
+unreachable, generic fallback), never by its message, and the exception
+rethrown to the handler carries no cause — so nothing credential-bearing can
+reach a log or an outbound event on this path.
+
+**Cost:** none on the implementation side — clean pass first review round.
+The review did surface three small gaps, parked rather than fixed: tests
+check `running` resets on failure but never assert `stop()` was actually
+invoked on the failed bot; a direct (unwrapped) `SSLHandshakeException` from
+connect is not mapped to the TLS reason, only one arriving as a cause is;
+and `stopBuilt` only catches `RuntimeException` around `stop()`, so an
+`Error` there would replace the original failure instead of being logged
+alongside it. See PLAN.md "Harden the connect-failure path further".
+
 ## 2026-09-24 — Bad credentials are now rejected on save and their errors shown by the form
 
 Prompted by an incident: a Twitch password saved as the whole `PASS
