@@ -47,18 +47,50 @@ public class IrcSession {
             "353", "366",
             "372", "375", "376", "422");
 
+    /**
+     * The library default backoff (1 s initial, 60 s max), kept explicit here rather
+     * than left implicit so it reads next to {@link #RECONNECT_MAX_ATTEMPTS}, the one
+     * production actually changes.
+     */
+    private static final long DEFAULT_RECONNECT_INITIAL_DELAY_MILLIS = 1000;
+    private static final long DEFAULT_RECONNECT_MAX_DELAY_MILLIS = 60000;
+
+    /**
+     * Finite in production, unlike the library's own default of 0 (retry forever):
+     * "gave up" has to be reachable, not theoretical. With the delays above
+     * (doubling from 1 s, capped at 60 s), 10 attempts wait 1+2+4+8+16+32+60+60+60+60
+     * = 303 s, about five minutes, before giving up — long enough to ride out a
+     * network blip or a server restart, short enough that a session which really has
+     * lost its server does not sit "reconnecting" forever.
+     */
+    private static final int RECONNECT_MAX_ATTEMPTS = 10;
+
     private final Consumer<OutboundEvent> sink;
     private final AtomicBoolean running = new AtomicBoolean();
 
     private volatile IRCBot bot;
 
+    /** {@code server.name()} from the most recent {@link #connect}, for status details. */
+    private volatile String serverName;
+
     /**
-     * -1 in production, which leaves irc-client's own reconnect backoff (1000 ms
-     * initial, 60000 ms max, unlimited attempts) untouched. Set only through
-     * {@link #setReconnectBackoffForTest}.
+     * Wired by {@link LiveSession}/{@link IrcSessionRegistry} so a session that gives
+     * up on reconnecting can ask to be taken out of the registry, without this class
+     * knowing the registry exists. Runs after the bot has been stopped, off the
+     * connection-event thread. Does nothing by default, which is enough for a test
+     * that never wires it.
+     */
+    private volatile Runnable gaveUpCallback = () -> { };
+
+    /**
+     * -1 in production, which leaves irc-client's own reconnect delays untouched.
+     * Set only through {@link #setReconnectBackoffForTest}.
      */
     private volatile long testReconnectInitialDelayMillis = -1;
     private volatile long testReconnectMaxDelayMillis = -1;
+
+    /** Only read when both delay fields above are set; 0 (unlimited) otherwise. */
+    private volatile int testReconnectMaxAttempts;
 
     /**
      * Set only while a connect is in progress, and read only by the connecting
@@ -79,14 +111,33 @@ public class IrcSession {
     /**
      * Package-private seam so a test can make irc-client retry within about 100 ms
      * instead of waiting out the library's default backoff. Production code never
-     * calls this, so it keeps the library's own defaults. {@code maxAttempts} is
-     * deliberately not a parameter here: leaving reconnection unlimited, exactly
-     * like production, is what task 03's finite-attempts behaviour is tested
-     * against.
+     * calls this, so it keeps the library's own delays. Leaves the attempt cap
+     * unlimited (0), same as this method always did before task 03 gave production
+     * itself a finite cap; a test that needs "gave up" reachable uses the three-arg
+     * overload below instead.
      */
     void setReconnectBackoffForTest(long initialDelayMillis, long maxDelayMillis) {
+        setReconnectBackoffForTest(initialDelayMillis, maxDelayMillis, 0);
+    }
+
+    /**
+     * As above, but also sets a finite attempt cap, for a test that needs to see
+     * "gave up" without waiting out {@link #RECONNECT_MAX_ATTEMPTS}'s production
+     * total.
+     */
+    void setReconnectBackoffForTest(long initialDelayMillis, long maxDelayMillis,
+            int maxAttempts) {
         this.testReconnectInitialDelayMillis = initialDelayMillis;
         this.testReconnectMaxDelayMillis = maxDelayMillis;
+        this.testReconnectMaxAttempts = maxAttempts;
+    }
+
+    /**
+     * Package-private seam wired by {@link IrcSessionRegistry#open} so this session
+     * can ask, once it gives up reconnecting, to be taken out of the registry.
+     */
+    void whenGivenUp(Runnable callback) {
+        this.gaveUpCallback = callback;
     }
 
     /**
@@ -115,6 +166,7 @@ public class IrcSession {
         capturedNotice = null;
         capturedError = null;
         capturingServerText = true;
+        serverName = server.name();
 
         IRCBot built = null;
         try {
@@ -149,9 +201,15 @@ public class IrcSession {
             long testInitial = testReconnectInitialDelayMillis;
             long testMax = testReconnectMaxDelayMillis;
             if (testInitial >= 0 && testMax >= 0) {
-                // Test-only seam: keeps maxAttempts at 0 (unlimited), same as
-                // production, and only shortens the delay between attempts.
-                clientBuilder.reconnectBackoff(testInitial, testMax, 0);
+                // Test-only seam: shortens the delay between attempts and, when the
+                // three-arg overload was used, the attempt cap too.
+                clientBuilder.reconnectBackoff(testInitial, testMax, testReconnectMaxAttempts);
+            } else {
+                // Production: the library's own delays, but a finite cap so a
+                // connection that never comes back eventually gives up rather than
+                // retrying forever.
+                clientBuilder.reconnectBackoff(DEFAULT_RECONNECT_INITIAL_DELAY_MILLIS,
+                        DEFAULT_RECONNECT_MAX_DELAY_MILLIS, RECONNECT_MAX_ATTEMPTS);
             }
 
             if (hasText(request.saslPassword())) {
@@ -515,6 +573,72 @@ public class IrcSession {
                 sink.accept(OutboundEvent.server(message.getCommand(), readable(message)));
             }
         }
+
+        @Override
+        public void onDisconnected(IRCBot eventBot) {
+            if (!isCurrentBot(eventBot)) {
+                // A late event from a bot this session has already moved on from
+                // (disconnect(), or a failed first connect's stopBuilt): not ours to
+                // report any more.
+                return;
+            }
+            sink.accept(OutboundEvent.status("reconnecting", "lost the connection to "
+                    + serverName));
+        }
+
+        @Override
+        public void onReconnecting(IRCBot eventBot, int attempt, long delayMillis) {
+            if (!isCurrentBot(eventBot)) {
+                return;
+            }
+            long seconds = (delayMillis + 999) / 1000;
+            sink.accept(OutboundEvent.status("reconnecting", "reconnecting to " + serverName
+                    + " (attempt " + attempt + ", in " + seconds + "s)"));
+        }
+
+        @Override
+        public void onGaveUp(IRCBot eventBot, int attempts) {
+            if (!isCurrentBot(eventBot)) {
+                return;
+            }
+            // running is cleared here, on the connection-event thread: it is only a
+            // volatile flag write, and a caller checking isRunning() right after this
+            // status arrives must see it already false.
+            running.set(false);
+            sink.accept(OutboundEvent.status("disconnected", "gave up reconnecting to "
+                    + serverName + " after " + attempts + " attempts"));
+            // Stopping the bot, and telling the registry this session is done, must
+            // not happen on the connection-event thread itself: IRCBot.stop() would
+            // still return (irc-client skips its drain wait when called from that
+            // thread), but nothing here may risk delaying every later connection
+            // event for a bot this session no longer even reconnects.
+            Thread stopper = new Thread(() -> stopAfterGaveUp(eventBot),
+                    "irc-session-gave-up-stop");
+            stopper.setDaemon(true);
+            stopper.start();
+        }
+    }
+
+    /** Whether {@code eventBot} is still this session's current bot. */
+    private boolean isCurrentBot(IRCBot eventBot) {
+        return bot == eventBot;
+    }
+
+    /**
+     * Stops the bot that gave up and, once it is stopped, lets the registry know
+     * this session is done. Always runs off the connection-event thread (see
+     * {@link Forwarder#onGaveUp}).
+     */
+    private void stopAfterGaveUp(IRCBot eventBot) {
+        if (bot == eventBot) {
+            bot = null;
+        }
+        try {
+            eventBot.stop();
+        } catch (RuntimeException e) {
+            LOGGER.debug("Stop after giving up on reconnecting was not clean", e);
+        }
+        gaveUpCallback.run();
     }
 
     /**

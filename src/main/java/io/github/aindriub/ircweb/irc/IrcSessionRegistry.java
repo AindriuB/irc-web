@@ -47,7 +47,14 @@ public class IrcSessionRegistry {
                         "already connected to " + existing.serverId() + "; disconnect first");
             }
             LOGGER.info("Opening an IRC session for '{}' on {}", username, serverId);
-            return new LiveSession(username, serverId);
+            LiveSession session = new LiveSession(username, serverId);
+            // Wired so a session that gives up reconnecting can take itself out of
+            // the map, but only if it is still the one mapped here: an event from an
+            // older, already-replaced session (its bot stopping in its own time,
+            // off the connection-event thread) must never end whatever is running
+            // now under the same username.
+            session.irc().whenGivenUp(() -> endIfCurrent(username, session));
+            return session;
         });
     }
 
@@ -56,6 +63,21 @@ public class IrcSessionRegistry {
         LiveSession session = sessions.remove(username);
         if (session != null) {
             LOGGER.info("Closing the IRC session for '{}' on {}", username, session.serverId());
+            session.close();
+        }
+    }
+
+    /**
+     * Ends {@code session} only if it is still the one mapped for {@code username} —
+     * a compare-and-remove, backed by {@link ConcurrentHashMap#remove(Object, Object)}.
+     * Package-private: {@link #open} wires this to each session's own gave-up
+     * callback, and a test drives it directly to prove the comparison without a
+     * live gave-up.
+     */
+    void endIfCurrent(String username, LiveSession session) {
+        if (sessions.remove(username, session)) {
+            LOGGER.info("Closing the IRC session for '{}' on {} after giving up on reconnecting",
+                    username, session.serverId());
             session.close();
         }
     }
