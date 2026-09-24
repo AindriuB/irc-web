@@ -66,10 +66,10 @@ jobs:
         run: |
           # Building an image says it compiles. Starting it says it runs, which
           # is a different claim and the one that matters.
-          docker run -d --name probe -p 8081:8081 \
+          docker run -d --name probe -p 8667:8667 \
             $(echo "${{ steps.meta.outputs.tags }}" | head -1)
           for i in $(seq 1 30); do
-            if curl -sf -o /dev/null http://127.0.0.1:8081/health; then
+            if curl -sf -o /dev/null http://127.0.0.1:8667/health; then
               echo "image is healthy and its configuration loaded"
               docker rm -f probe
               exit 0
