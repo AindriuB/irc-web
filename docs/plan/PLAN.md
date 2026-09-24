@@ -27,7 +27,7 @@ fixed; see HISTORY.)
 ## Next
 
 ### Theme switcher
-The blue branding (task 01) is landing, fixed and non-switchable. The theme
+The blue branding (tasks 01-02) has landed, fixed and non-switchable. The theme
 pack at /srv/dev/scratch/irc-web-theme-pack (not in the repo; the maintainer
 holds the zip) has five more palettes — phosphor, amber, iris, coral,
 paper-teal — meant to drive the whole UI, not just the logo. Needs per-palette

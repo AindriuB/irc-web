@@ -17,6 +17,30 @@ in the same commit.
 **Cost:** <what was hard, what was tried and abandoned, what not to retry.>
 -->
 
+## 2026-09-24 — Brand assets and manifest now serve without login or setup
+
+`/brand/**` and `/manifest.webmanifest` are permitted in `SecurityConfig` and
+let through `SetupRequiredFilter` before first-run setup, so browsers can
+fetch favicons and the manifest with no cookies and before anyone is signed
+in — closing the gap task 01 left open. Everything else stays behind auth:
+`/index.html`, `/app.js` and `/api/servers` are unreachable both before setup
+(409) and after (401), unauthenticated. New `BrandingIT` (own fresh database,
+`FirstRunIT`'s ordered before/after-setup pattern) pins both states plus
+raw-socket path-traversal attempts against `/brand/..;/index.html`,
+`/brand/%2e%2e/app.js` and `/brand/../api/servers`, none of which return 200.
+
+**Cost:** `SetupRequiredFilter`'s prefix check first matched on the raw
+request URI; a security review pointed out that makes the check depend on
+Tomcat/Spring Security's URI normalization rather than being self-contained,
+so it now matches on `getServletPath()+getPathInfo()` instead. The review
+also confirmed *why* the traversal probes return 400 rather than reaching the
+filter at all: `StrictHttpFirewall`, ahead of this filter in Spring
+Security's chain, rejects `..`, `;`, `%2e` and `//` outright — the IT now
+proves that boundary explicitly rather than assuming it. Ergo's throttle hit
+again on the first local verify; `docker restart irc-web-ergo` cleared it, as
+before — restart only that container, never `irc-web` itself, and check
+nothing else is mid-build against the same ergo first.
+
 ## 2026-09-24 — Fixed-blue branding: favicons, manifest, login/setup logo
 
 irc-web now ships a brand identity instead of Spring Boot defaults: an inline
