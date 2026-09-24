@@ -1,5 +1,6 @@
 package io.github.aindriub.ircweb.irc;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -143,6 +144,116 @@ class IrcSessionTest {
                 "a second connection means the reconnect loop was not stopped");
     }
 
+    @Test
+    @DisplayName("an Error during start still stops the bot the attempt built")
+    void anErrorDuringStartStillStopsTheBot() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        ErrorOnceSession session = new ErrorOnceSession(synchronizedSink(events));
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
+                List.of());
+
+        // The seam throws before start() ever calls client.connect(), so this proves
+        // the cleanup itself, not the fake server: an Error thrown mid-start must be
+        // rethrown unchanged after connect() has already stopped the bot and reset
+        // running, exactly like a RuntimeException does.
+        OutOfMemoryError thrown = assertThrows(OutOfMemoryError.class,
+                () -> session.connect(server, request));
+        assertEquals("simulated for test", thrown.getMessage());
+
+        synchronized (events) {
+            OutboundEvent last = events.get(events.size() - 1);
+            assertEquals("status", last.type());
+            assertEquals("disconnected", last.state());
+        }
+
+        // Nothing ever reached the fake server: the seam fired before any socket was
+        // opened.
+        serverSocket.setSoTimeout(1000);
+        assertThrows(SocketTimeoutException.class, serverSocket::accept);
+
+        // The proof that stop() really ran and running was really reset: a second,
+        // un-seamed connect on the same session succeeds rather than being refused
+        // as "already connected".
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket socket = serverSocket.accept()) {
+                acceptRegistration(socket, "webtest");
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-after-error");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        assertDoesNotThrow(() -> session.connect(server, request));
+        session.disconnect();
+    }
+
+    @Test
+    @DisplayName("a failed connect does not block reconnecting to a server that now accepts")
+    void canReconnectAfterAFailedConnect() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
+                List.of());
+
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket first = serverSocket.accept()) {
+                rejectRegistration(first);
+            } catch (IOException e) {
+                return;
+            }
+            try (Socket second = serverSocket.accept()) {
+                acceptRegistration(second, "webtest");
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-reconnect");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        assertThrows(IllegalStateException.class, () -> session.connect(server, request));
+
+        // Refusing every later attempt as "already connected" to a connection that
+        // does not exist was exactly the bug: running must have been reset.
+        assertDoesNotThrow(() -> session.connect(server, request));
+
+        synchronized (events) {
+            assertTrue(events.stream().anyMatch(e -> "status".equals(e.type())
+                            && "ready".equals(e.state())),
+                    "expected a ready status once the second attempt registered");
+        }
+
+        session.disconnect();
+    }
+
+    /**
+     * Reads NICK and USER, answers with 001 (welcome) and then blocks until the
+     * client closes the connection, so an already-successful registration is not
+     * mistaken by irc-client for a dropped connection worth reconnecting from.
+     */
+    private static void acceptRegistration(Socket socket, String nick) throws IOException {
+        socket.setSoTimeout(5000);
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        OutputStream out = socket.getOutputStream();
+        String line;
+        int seen = 0;
+        while (seen < 2 && (line = in.readLine()) != null) {
+            if (line.regionMatches(true, 0, "NICK", 0, 4)
+                    || line.regionMatches(true, 0, "USER", 0, 4)) {
+                seen++;
+            }
+        }
+        out.write((":srv 001 " + nick + " :Welcome\r\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+        socket.setSoTimeout(0);
+        in.readLine();
+    }
+
     private static void rejectRegistration(Socket socket) throws IOException {
         socket.setSoTimeout(5000);
         BufferedReader in = new BufferedReader(
@@ -174,5 +285,28 @@ class IrcSessionTest {
                 events.add(event);
             }
         };
+    }
+
+    /**
+     * A session whose first start attempt throws an {@link Error} instead of really
+     * starting, using {@link IrcSession}'s package-private seam. Every attempt after
+     * the first behaves exactly like the production code, which is what lets the
+     * same instance prove a real second connect works afterwards.
+     */
+    private static final class ErrorOnceSession extends IrcSession {
+
+        private final AtomicBoolean failNext = new AtomicBoolean(true);
+
+        ErrorOnceSession(java.util.function.Consumer<OutboundEvent> sink) {
+            super(sink);
+        }
+
+        @Override
+        void startBot(io.github.aindriub.irc.client.bot.IRCBot bot) {
+            if (failNext.compareAndSet(true, false)) {
+                throw new OutOfMemoryError("simulated for test");
+            }
+            super.startBot(bot);
+        }
     }
 }

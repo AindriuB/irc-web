@@ -68,6 +68,7 @@ public class IrcSession {
             throw new IllegalArgumentException(credentialProblem);
         }
 
+        IRCBot built = null;
         try {
             sink.accept(OutboundEvent.status("connecting",
                     server.name() + " as " + request.nick()));
@@ -103,36 +104,60 @@ public class IrcSession {
                         request.saslPassword());
             }
 
-            bot = builder.build();
-            bot.start();
-        } catch (Exception e) {
+            built = builder.build();
+            bot = built;
+            startBot(built);
+        } catch (Throwable t) {
             // Netty can hand a plain checked IOException straight back through
-            // start(), unwrapped, so this has to catch Exception, not just
-            // RuntimeException, or a bare connection refusal would skip the stop()
-            // below and leave the bot's own reconnect loop running forever.
+            // start(), unwrapped, and a broken TLS classpath or an OutOfMemoryError
+            // surfaces as an Error, not an Exception. Every one of them has to stop
+            // the bot this attempt built and clear running, or it is orphaned with
+            // its own reconnect loop running forever and unreachable by anything
+            // that could stop it.
             running.set(false);
-            stopWhateverWasBuilt();
-            String reason = mapFailureReason(e);
-            // Only the exception's own class and the safe, mapped reason are
-            // logged. Never e.getMessage() or e itself: irc-client 1.1.0 puts the
+            stopBuilt(built);
+            String reason = mapFailureReason(t);
+            // Only the throwable's own class and the safe, mapped reason are
+            // logged. Never t.getMessage() or t itself: irc-client 1.1.0 puts the
             // rejected value in a cause's message, and logging the throwable would
             // print that cause chain.
-            LOGGER.info("Connection to {} failed: {}", server.id(), e.getClass().getSimpleName());
+            LOGGER.info("Connection to {} failed: {}", server.id(), t.getClass().getSimpleName());
             sink.accept(OutboundEvent.status("disconnected", reason));
+            if (t instanceof Error error) {
+                // Not this method's to translate: cleanup above has already run,
+                // and the caller needs to see what actually happened.
+                throw error;
+            }
             throw new IllegalStateException(reason);
         }
     }
 
-    /** Stops the bot this connect attempt built, if it got that far. Never leaves it running. */
-    private void stopWhateverWasBuilt() {
-        IRCBot current = bot;
-        bot = null;
-        if (current != null) {
-            try {
-                current.stop();
-            } catch (RuntimeException e) {
-                LOGGER.debug("Stop after a failed connect was not clean", e);
-            }
+    /**
+     * Package-private seam so a test can make a start attempt fail with something
+     * irc-client cannot be driven to produce over a real socket, such as an Error.
+     * Production code always takes this, unchanged.
+     */
+    void startBot(IRCBot bot) {
+        bot.start();
+    }
+
+    /**
+     * Stops the bot this attempt built, using the reference captured before the
+     * failure rather than the {@code bot} field: a concurrent {@link #disconnect()}
+     * may already have replaced or cleared that field, and must not be able to make
+     * this cleanup stop nothing.
+     */
+    private void stopBuilt(IRCBot built) {
+        if (built == null) {
+            return;
+        }
+        if (bot == built) {
+            bot = null;
+        }
+        try {
+            built.stop();
+        } catch (RuntimeException e) {
+            LOGGER.debug("Stop after a failed connect was not clean", e);
         }
     }
 
@@ -198,14 +223,20 @@ public class IrcSession {
                 .orElse(null);
     }
 
+    private static final String CREDENTIAL_NOT_VALID_REASON =
+            "A saved credential is not valid for IRC. Edit the profile and save it again.";
+    private static final String UNREACHABLE_REASON =
+            "Could not reach the server. Check the host and port, then try again.";
+
     /**
      * A fixed, credential-free reason for each failure irc-client 1.1.0 can report on
-     * a first connect. Matched only on the outermost exception's own message, never on
-     * a cause: {@code RegistrationHandler.exceptionCaught} wraps validation failures
-     * such as a rejected password in a cause whose message repeats the value, and that
-     * must never reach the browser or a log.
+     * a first connect. Matched only on the outermost throwable's own message, never on
+     * a cause's message: {@code RegistrationHandler.exceptionCaught} wraps validation
+     * failures such as a rejected password in a cause whose message repeats the value,
+     * and that must never reach the browser or a log. Where a cause is consulted at
+     * all (below), only its type is inspected, never its message.
      */
-    private static String mapFailureReason(Exception e) {
+    private static String mapFailureReason(Throwable e) {
         String message = e.getMessage();
         if (message != null) {
             if (message.startsWith("Registration rejected by the server")) {
@@ -217,8 +248,7 @@ public class IrcSession {
                 return "SASL authentication failed. Check the SASL username and password.";
             }
             if ("Registration failed".equals(message)) {
-                return "A saved credential is not valid for IRC. Edit the profile and "
-                        + "save it again.";
+                return mapRegistrationFailedReason(e.getCause());
             }
             if (message.startsWith("Server did not complete registration within")) {
                 return "The server did not finish registration in time. Try again.";
@@ -227,10 +257,49 @@ public class IrcSession {
                 return "The connection closed before registration finished. Try again.";
             }
         }
-        if (e instanceof java.io.IOException || e.getCause() instanceof java.io.IOException) {
-            return "Could not reach the server. Check the host and port, then try again.";
+        if (e instanceof java.io.IOException || chainHas(e.getCause(), java.io.IOException.class)) {
+            return UNREACHABLE_REASON;
         }
         return "Could not connect. Check the server settings and try again.";
+    }
+
+    /**
+     * {@code RegistrationHandler.exceptionCaught} wraps everything from a channel
+     * error to the library's own credential validation in one message, "Registration
+     * failed", so the cause's message can never be used to tell those apart without
+     * risking a credential. Its type can: an {@link IllegalArgumentException}
+     * anywhere in the chain is irc-client rejecting a value we sent (a bad password,
+     * a bad SASL username); an {@link java.io.IOException} is a socket or TLS problem
+     * reaching the server. Anything else falls back to the credential message, which
+     * was always this method's answer before the two were told apart.
+     */
+    private static String mapRegistrationFailedReason(Throwable cause) {
+        if (chainHas(cause, IllegalArgumentException.class)) {
+            return CREDENTIAL_NOT_VALID_REASON;
+        }
+        if (chainHas(cause, javax.net.ssl.SSLHandshakeException.class)) {
+            return "Could not establish a secure connection to the server.";
+        }
+        if (chainHas(cause, java.io.IOException.class)) {
+            return UNREACHABLE_REASON;
+        }
+        return CREDENTIAL_NOT_VALID_REASON;
+    }
+
+    /** Whether {@code type} appears anywhere in {@code start}'s cause chain. */
+    private static boolean chainHas(Throwable start, Class<? extends Throwable> type) {
+        Throwable current = start;
+        while (current != null) {
+            if (type.isInstance(current)) {
+                return true;
+            }
+            Throwable next = current.getCause();
+            if (next == current) {
+                break;
+            }
+            current = next;
+        }
+        return false;
     }
 
     /**
