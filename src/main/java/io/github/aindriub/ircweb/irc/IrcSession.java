@@ -57,6 +57,17 @@ public class IrcSession {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("this session is already connected");
         }
+
+        // Checked before anything is built: a password or SASL value that irc-client
+        // would refuse anyway is refused here, with a message that never echoes it,
+        // rather than reaching the library and coming back wrapped in a stack trace.
+        String credentialProblem = firstCredentialProblem(request);
+        if (credentialProblem != null) {
+            running.set(false);
+            sink.accept(OutboundEvent.status("disconnected", credentialProblem));
+            throw new IllegalArgumentException(credentialProblem);
+        }
+
         try {
             sink.accept(OutboundEvent.status("connecting",
                     server.name() + " as " + request.nick()));
@@ -94,12 +105,34 @@ public class IrcSession {
 
             bot = builder.build();
             bot.start();
-        } catch (RuntimeException e) {
+        } catch (Exception e) {
+            // Netty can hand a plain checked IOException straight back through
+            // start(), unwrapped, so this has to catch Exception, not just
+            // RuntimeException, or a bare connection refusal would skip the stop()
+            // below and leave the bot's own reconnect loop running forever.
             running.set(false);
-            bot = null;
-            LOGGER.info("Connection to {} failed: {}", server.id(), e.toString());
-            sink.accept(OutboundEvent.status("disconnected", describe(e)));
-            throw e;
+            stopWhateverWasBuilt();
+            String reason = mapFailureReason(e);
+            // Only the exception's own class and the safe, mapped reason are
+            // logged. Never e.getMessage() or e itself: irc-client 1.1.0 puts the
+            // rejected value in a cause's message, and logging the throwable would
+            // print that cause chain.
+            LOGGER.info("Connection to {} failed: {}", server.id(), e.getClass().getSimpleName());
+            sink.accept(OutboundEvent.status("disconnected", reason));
+            throw new IllegalStateException(reason);
+        }
+    }
+
+    /** Stops the bot this connect attempt built, if it got that far. Never leaves it running. */
+    private void stopWhateverWasBuilt() {
+        IRCBot current = bot;
+        bot = null;
+        if (current != null) {
+            try {
+                current.stop();
+            } catch (RuntimeException e) {
+                LOGGER.debug("Stop after a failed connect was not clean", e);
+            }
         }
     }
 
@@ -157,11 +190,47 @@ public class IrcSession {
         return value != null && !value.isBlank();
     }
 
-    private static String describe(RuntimeException e) {
-        // The cause carries the useful half: "Connection refused", "certificate
-        // problem". The wrapper alone reads as a shrug.
-        Throwable cause = e.getCause();
-        return cause == null ? e.getMessage() : e.getMessage() + " (" + cause.getMessage() + ")";
+    /** Empty when every effective credential is usable, else a message safe to show. */
+    private static String firstCredentialProblem(ConnectRequest request) {
+        return CredentialRules.checkPassword(request.password())
+                .or(() -> CredentialRules.checkSaslUsername(request.saslUsername()))
+                .or(() -> CredentialRules.checkSaslPassword(request.saslPassword()))
+                .orElse(null);
+    }
+
+    /**
+     * A fixed, credential-free reason for each failure irc-client 1.1.0 can report on
+     * a first connect. Matched only on the outermost exception's own message, never on
+     * a cause: {@code RegistrationHandler.exceptionCaught} wraps validation failures
+     * such as a rejected password in a cause whose message repeats the value, and that
+     * must never reach the browser or a log.
+     */
+    private static String mapFailureReason(Exception e) {
+        String message = e.getMessage();
+        if (message != null) {
+            if (message.startsWith("Registration rejected by the server")) {
+                return "The server rejected registration. Check the password and nick, "
+                        + "then try again.";
+            }
+            if (message.startsWith("SASL authentication failed")
+                    || message.startsWith("SASL was configured but the server refused")) {
+                return "SASL authentication failed. Check the SASL username and password.";
+            }
+            if ("Registration failed".equals(message)) {
+                return "A saved credential is not valid for IRC. Edit the profile and "
+                        + "save it again.";
+            }
+            if (message.startsWith("Server did not complete registration within")) {
+                return "The server did not finish registration in time. Try again.";
+            }
+            if ("Connection closed before registration completed".equals(message)) {
+                return "The connection closed before registration finished. Try again.";
+            }
+        }
+        if (e instanceof java.io.IOException || e.getCause() instanceof java.io.IOException) {
+            return "Could not reach the server. Check the host and port, then try again.";
+        }
+        return "Could not connect. Check the server settings and try again.";
     }
 
     /**
