@@ -119,6 +119,13 @@ public class DirectoryService {
         ProfileEntity entity = profiles.findByServerId(serverId)
                 .orElseGet(() -> new ProfileEntity(serverId));
 
+        CredentialRules.checkPassword(update.password())
+                .ifPresent(message -> { throw new IllegalArgumentException(message); });
+        CredentialRules.checkSaslPassword(update.saslPassword())
+                .ifPresent(message -> { throw new IllegalArgumentException(message); });
+        CredentialRules.checkSaslUsername(trimToNull(update.saslUsername()))
+                .ifPresent(message -> { throw new IllegalArgumentException(message); });
+
         entity.setNick(trimToNull(update.nick()));
         entity.setUsername(trimToNull(update.username()));
         entity.setRealname(trimToNull(update.realname()));
