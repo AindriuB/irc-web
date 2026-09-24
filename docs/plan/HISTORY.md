@@ -17,6 +17,29 @@ in the same commit.
 **Cost:** <what was hard, what was tried and abandoned, what not to retry.>
 -->
 
+## 2026-09-24 — Reconnecting and gave-up now reach the browser live
+
+irc-web forwards irc-client 1.2.1's `onDisconnected`/`onReconnecting`/
+`onGaveUp` connection events to the browser as `status` updates: "lost the
+connection to `<network>`", then "reconnecting to `<network>` (attempt n, in
+Xs)" as each attempt backs off, back to `ready` on success, or "gave up
+reconnecting to `<network>` after n attempts" (a final `disconnected`) if
+every attempt fails. Production's reconnect policy is now a maintainer
+decision, not the library default: initial 1s, max 300s, 32 attempts — about
+2 hours of retrying before giving up, chosen so a bouncer can ride out a
+broadband outage or a maintenance window. Giving up stops the bot on a
+separate daemon thread, never on irc-client's connection-event thread, and
+`IrcSessionRegistry` does a compare-and-remove so an old bot's gave-up can
+never end a session a user has since reconnected under the same username;
+`isRunning()` now checks both the running flag and the bot.
+**Cost:** the first build used the library's defaults (10 attempts, ~5
+minutes total), which the maintainer rejected outright as too short — a
+router reboot or an ISP blip can easily outlast 5 minutes. Tests moved from
+fixed sleeps to a backoff test seam plus condition waits, per review.
+Known and left alone: the websocket send is synchronous under `sendLock` on
+the connection-event thread, so a stalled browser socket would delay these
+events; not seen as a real problem yet.
+
 ## 2026-09-24 — A failed registration now shows the server's own words
 
 While a connect is in progress, irc-web captures the last server

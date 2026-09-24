@@ -19,20 +19,19 @@ browser), and app.js shows those save- and connect-failure reasons by the
 form. This closes the incident where a bad Twitch password left an orphaned
 bot reconnecting every 60s for hours (see HISTORY).
 
-### Take irc-client 1.2.x
-1.2.1 is published and irc-web now runs on it (pom.xml pin moved from 1.1.0;
-1.2.0 was never published). `ServerRefusedException` and the credential
-builder's `IllegalArgumentException` map by type to fixed, credential-free
-reasons, and the UI now shows a `reconnecting` state (warn-coloured, input and
-Say disabled, Stop enabled, Connect re-enabled once the bot gives up) — see
-HISTORY. Task 02 has landed: a failed registration now leads with the
-server's own scrubbed NOTICE/ERROR text ahead of the fixed reason. **03 (task
-in flight: `03-reconnecting-status-and-gave-up`) is next and is the last item
-here** — drive the `reconnecting`/gave-up UI from irc-client 1.2.1's
-`onDisconnected`, `onReconnecting`, `onGaveUp` events; task 04 built the UI
-side against a fixed contract, 03 is the wiring.
+### Take irc-client 1.2.x — done
+irc-web runs on 1.2.1 (pom.xml pin moved from 1.1.0; 1.2.0 was never
+published). `ServerRefusedException` and the credential builder's
+`IllegalArgumentException` map by type to fixed, credential-free reasons. A
+failed registration leads with the server's own scrubbed NOTICE/ERROR text
+ahead of that fixed reason. The browser now shows `reconnecting` (warn-
+coloured, input and Say disabled, Stop enabled, attempt/delay in the detail
+line) driven live off irc-client's `onDisconnected`/`onReconnecting` events,
+and `gave up` (Connect re-enabled) off `onGaveUp`, wired end to end through
+`IrcSession`/`IrcSessionRegistry`. Production retries for about 2 hours (1s
+initial, 300s max, 32 attempts) before giving up — see HISTORY.
 **Later, small:** `CredentialRules`' javadoc still says "mirroring irc-client
-1.1.0"; needs a one-line update to 1.2.1 once 03 lands.
+1.1.0"; needs a one-line update to 1.2.1.
 
 (Session-expiry — the socket dying silently 30 minutes after page load — is
 fixed; see HISTORY.)
@@ -68,6 +67,12 @@ A session is keyed by account, so connecting to a second network is refused.
 Lifting that needs a window that can show several, not just a registry change.
 
 ## Someday
+
+### Websocket send is synchronous under sendLock on the event thread
+Known since task 03: a stalled browser socket delays IRC connection events
+(including reconnecting/gave-up status) because the send happens under
+`sendLock` on irc-client's connection-event thread. Not observed as a
+problem yet; worth an async send queue if it ever is.
 
 ### Attach a real IRC client
 A listener port so HexChat, irssi or a phone client can attach to the same
