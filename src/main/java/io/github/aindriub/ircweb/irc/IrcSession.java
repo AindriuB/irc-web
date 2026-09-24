@@ -48,27 +48,19 @@ public class IrcSession {
             "372", "375", "376", "422");
 
     /**
-     * Production's own backoff, not the library's default (1 s initial, 60 s max):
-     * a bouncer is meant to ride out a broadband outage or a maintenance window,
-     * not just a blip, so the ceiling is 5 minutes rather than 1. Kept explicit
-     * here rather than left implicit so it reads next to
-     * {@link #RECONNECT_MAX_ATTEMPTS}, which is worked out against these two
-     * values.
+     * Production's own backoff: a bouncer should ride out a broadband outage or a
+     * maintenance window, not just a blip, so the ceiling is 5 minutes, not the
+     * library default's 1.
      */
     private static final long DEFAULT_RECONNECT_INITIAL_DELAY_MILLIS = 1000;
     private static final long DEFAULT_RECONNECT_MAX_DELAY_MILLIS = 300000;
 
     /**
-     * Finite in production, unlike the library's own default of 0 (retry forever):
-     * "gave up" has to be reachable, not theoretical. With the delays above
-     * (doubling from 1 s, capped at 300 s), the first 9 attempts are still
-     * doubling and add up to 1+2+4+8+16+32+64+128+256 = 511 s; attempt 10 would be
-     * 512 s, past the 300 s cap, so from there every attempt waits the full 300 s.
-     * The remaining 32-9 = 23 attempts at that cap add 23*300 = 6900 s, for a
-     * total of 511+6900 = 7411 s, about 2 hours 3 minutes, before giving up —
-     * long enough to ride out a network blip, a server restart, or an ISP outage,
-     * short enough that a session which really has lost its server does not sit
-     * "reconnecting" forever.
+     * Finite, unlike the library's own default of 0 (retry forever): "gave up" has
+     * to be reachable. Doubling from 1 s, the first 9 attempts total 511 s
+     * (1+2+4+8+...+256); attempt 10 would be 512 s, past the 300 s cap, so the
+     * remaining 23 attempts wait 300 s each (6900 s). Total: 511+6900 = 7411 s,
+     * about 2h 3m.
      */
     private static final int RECONNECT_MAX_ATTEMPTS = 32;
 
@@ -90,8 +82,8 @@ public class IrcSession {
     private volatile Runnable gaveUpCallback = () -> { };
 
     /**
-     * -1 in production, which leaves irc-client's own reconnect delays untouched.
-     * Set only through {@link #setReconnectBackoffForTest}.
+     * -1 in production, which leaves {@link #connect} on its own policy (see the
+     * constants above). Set only through {@link #setReconnectBackoffForTest}.
      */
     private volatile long testReconnectInitialDelayMillis = -1;
     private volatile long testReconnectMaxDelayMillis = -1;
@@ -117,11 +109,9 @@ public class IrcSession {
 
     /**
      * Package-private seam so a test can make irc-client retry within about 100 ms
-     * instead of waiting out the library's default backoff. Production code never
-     * calls this, so it keeps the library's own delays. Leaves the attempt cap
-     * unlimited (0), same as this method always did before task 03 gave production
-     * itself a finite cap; a test that needs "gave up" reachable uses the three-arg
-     * overload below instead.
+     * instead of waiting out production's real backoff. Production code never calls
+     * this. Leaves the attempt cap unlimited (0); a test that needs "gave up"
+     * reachable uses the three-arg overload below instead.
      */
     void setReconnectBackoffForTest(long initialDelayMillis, long maxDelayMillis) {
         setReconnectBackoffForTest(initialDelayMillis, maxDelayMillis, 0);
@@ -212,9 +202,8 @@ public class IrcSession {
                 // three-arg overload was used, the attempt cap too.
                 clientBuilder.reconnectBackoff(testInitial, testMax, testReconnectMaxAttempts);
             } else {
-                // Production: the library's own delays, but a finite cap so a
-                // connection that never comes back eventually gives up rather than
-                // retrying forever.
+                // Production's own policy (see the constants above), not the
+                // library's default.
                 clientBuilder.reconnectBackoff(DEFAULT_RECONNECT_INITIAL_DELAY_MILLIS,
                         DEFAULT_RECONNECT_MAX_DELAY_MILLIS, RECONNECT_MAX_ATTEMPTS);
             }
@@ -325,7 +314,7 @@ public class IrcSession {
 
     public boolean isRunning() {
         IRCBot current = bot;
-        return current != null && current.isRunning();
+        return running.get() && current != null && current.isRunning();
     }
 
     private IRCBot require() {
@@ -608,9 +597,9 @@ public class IrcSession {
             if (!isCurrentBot(eventBot)) {
                 return;
             }
-            // running is cleared here, on the connection-event thread: it is only a
-            // volatile flag write, and a caller checking isRunning() right after this
-            // status arrives must see it already false.
+            // Cleared here, on the connection-event thread, rather than waiting for
+            // stopAfterGaveUp below: isRunning() reads this flag, and a caller
+            // checking it right after this status arrives must already see false.
             running.set(false);
             sink.accept(OutboundEvent.status("disconnected", "gave up reconnecting to "
                     + serverName + " after " + attempts + " attempts"));

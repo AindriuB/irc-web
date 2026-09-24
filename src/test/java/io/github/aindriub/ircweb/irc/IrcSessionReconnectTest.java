@@ -11,11 +11,14 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
@@ -49,15 +52,13 @@ class IrcSessionReconnectTest {
         int port = serverSocket.getLocalPort();
         List<OutboundEvent> events = new ArrayList<>();
         IrcSession session = new IrcSession(synchronizedSink(events));
-        // Short enough not to wait out the library's real backoff; the gap between
-        // the two delays leaves room to close and reopen the port in between.
+        // Short enough not to wait out production's real backoff.
         session.setReconnectBackoffForTest(150, 10_000);
         IrcServer server = fakeServer(port);
         ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
                 List.of());
 
-        java.util.concurrent.CountDownLatch secondRegistrationAccepted =
-                new java.util.concurrent.CountDownLatch(1);
+        CountDownLatch secondRegistrationAccepted = new CountDownLatch(1);
         Thread fakeIrcServer = new Thread(() -> {
             try (Socket first = serverSocket.accept()) {
                 registerThenDrop(first, "webtest");
@@ -65,16 +66,19 @@ class IrcSessionReconnectTest {
                 return;
             }
             try {
-                // Refuses the first reconnect attempt (delay 150ms): nothing is
-                // listening on the port while it is closed.
+                // Refuses the first reconnect attempt: nothing is listening on the
+                // port while it is closed.
                 serverSocket.close();
-                Thread.sleep(300);
-            } catch (IOException | InterruptedException e) {
+                // Reopens only once the client itself says attempt 2 is under way —
+                // proof attempt 1 already failed against the closed port, rather
+                // than a guess at how long that takes.
+                awaitReconnectingAttempt(events, 2, 10_000);
+            } catch (IOException e) {
+                return;
+            } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return;
             }
-            // Reopened well before the second attempt (delay 300ms after the
-            // first), so it succeeds.
             try (ServerSocket reopened = new ServerSocket(port)) {
                 try (Socket second = reopened.accept()) {
                     acceptRegistrationSignaling(second, "webtest", secondRegistrationAccepted);
@@ -88,7 +92,7 @@ class IrcSessionReconnectTest {
 
         assertDoesNotThrow(() -> session.connect(server, request));
 
-        assertTrue(secondRegistrationAccepted.await(10, java.util.concurrent.TimeUnit.SECONDS),
+        assertTrue(secondRegistrationAccepted.await(10, TimeUnit.SECONDS),
                 "the fake server never saw the reconnect's second registration");
 
         List<OutboundEvent> reconnecting = awaitStatusEvents(events, "reconnecting", 3);
@@ -102,9 +106,51 @@ class IrcSessionReconnectTest {
                 + "after the reconnect");
 
         for (OutboundEvent event : copyOf(events)) {
-            assertFalse(JSON.writeValueAsString(event).toLowerCase(java.util.Locale.ROOT)
+            assertFalse(JSON.writeValueAsString(event).toLowerCase(Locale.ROOT)
                     .contains("password"), "an event mentioned a password");
         }
+
+        session.disconnect();
+    }
+
+    @Test
+    @DisplayName("a channel configured at connect is rejoined, and shown again in the channels "
+            + "event, after a reconnect")
+    void channelsConfiguredAtConnectArePublishedAgainAfterAReconnect() throws Exception {
+        serverSocket = new ServerSocket(0);
+        List<OutboundEvent> events = new ArrayList<>();
+        IrcSession session = new IrcSession(synchronizedSink(events));
+        session.setReconnectBackoffForTest(50, 100);
+        IrcServer server = fakeServer(serverSocket.getLocalPort());
+        ConnectRequest request = new ConnectRequest("local", "webtest", null, null, null,
+                List.of("#chan"));
+
+        CountDownLatch secondRegistrationAccepted = new CountDownLatch(1);
+        Thread fakeIrcServer = new Thread(() -> {
+            try (Socket first = serverSocket.accept()) {
+                registerJoinThenDrop(first, "webtest");
+            } catch (IOException e) {
+                return;
+            }
+            try (Socket second = serverSocket.accept()) {
+                acceptRegistrationJoinSignaling(second, "webtest", secondRegistrationAccepted);
+            } catch (IOException e) {
+                // The assertion below times out and reports the failure.
+            }
+        }, "fake-irc-server-channels-after-reconnect");
+        fakeIrcServer.setDaemon(true);
+        fakeIrcServer.start();
+
+        assertDoesNotThrow(() -> session.connect(server, request));
+
+        assertTrue(secondRegistrationAccepted.await(10, TimeUnit.SECONDS),
+                "the fake server never saw the reconnect's second registration");
+        awaitStatusEvents(events, "ready", 2);
+
+        OutboundEvent channelsAfterSecondReady = awaitChannelsEventAfterLastReady(events);
+        assertTrue(channelsAfterSecondReady.channels().contains("#chan"),
+                "expected #chan in the channels event after the reconnect, got: "
+                        + channelsAfterSecondReady.channels());
 
         session.disconnect();
     }
@@ -205,9 +251,27 @@ class IrcSessionReconnectTest {
             assertEquals("disconnected", last.state());
         }
 
-        // Gives any late, stale event from the stopped bot a chance to arrive
-        // before checking that none did.
-        Thread.sleep(400);
+        // The observable marker: a second, real connect on the same session. If
+        // the rejected attempt's bot were still alive and misbehaving, its events
+        // would have had this whole round trip — a fresh socket, registration and
+        // a ready status — to arrive before the check below runs.
+        try (ServerSocket secondServerSocket = new ServerSocket(0)) {
+            IrcServer secondServer = fakeServer(secondServerSocket.getLocalPort());
+            Thread secondFakeServer = new Thread(() -> {
+                try (Socket socket = secondServerSocket.accept()) {
+                    acceptRegistration(socket, "webtest");
+                } catch (IOException e) {
+                    // The assertion below times out and reports the failure.
+                }
+            }, "fake-irc-server-after-reject");
+            secondFakeServer.setDaemon(true);
+            secondFakeServer.start();
+
+            assertDoesNotThrow(() -> session.connect(secondServer, request));
+            awaitStatusEvents(events, "ready", 1);
+            session.disconnect();
+        }
+
         synchronized (events) {
             assertFalse(events.stream().anyMatch(e -> "status".equals(e.type())
                             && "reconnecting".equals(e.state())),
@@ -239,7 +303,26 @@ class IrcSessionReconnectTest {
         assertDoesNotThrow(() -> session.connect(server, request));
         session.disconnect();
 
-        Thread.sleep(400);
+        // The observable marker: a second connect, on the same session, must reach
+        // ready. A spurious reconnecting/gave-up event from an unclean shutdown of
+        // the first bot would have had this whole round trip to surface first.
+        try (ServerSocket secondServerSocket = new ServerSocket(0)) {
+            IrcServer secondServer = fakeServer(secondServerSocket.getLocalPort());
+            Thread secondFakeServer = new Thread(() -> {
+                try (Socket socket = secondServerSocket.accept()) {
+                    acceptRegistration(socket, "webtest");
+                } catch (IOException e) {
+                    // The assertion below times out and reports the failure.
+                }
+            }, "fake-irc-server-after-disconnect");
+            secondFakeServer.setDaemon(true);
+            secondFakeServer.start();
+
+            assertDoesNotThrow(() -> session.connect(secondServer, request));
+            awaitStatusEvents(events, "ready", 2);
+            session.disconnect();
+        }
+
         synchronized (events) {
             assertFalse(events.stream().anyMatch(e -> "status".equals(e.type())
                             && ("reconnecting".equals(e.state())
@@ -270,8 +353,7 @@ class IrcSessionReconnectTest {
     }
 
     private static OutboundEvent awaitStatus(List<OutboundEvent> events, String state,
-            java.util.function.Predicate<String> detailMatches, long timeoutMillis)
-            throws InterruptedException {
+            Predicate<String> detailMatches, long timeoutMillis) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         do {
             synchronized (events) {
@@ -285,6 +367,56 @@ class IrcSessionReconnectTest {
             Thread.sleep(20);
         } while (System.currentTimeMillis() < deadline);
         throw new AssertionError("no matching '" + state + "' status event arrived in time");
+    }
+
+    /**
+     * Waits for the {@code reconnecting} status naming the given attempt number, the
+     * condition {@link #reportsReconnectingThenReadyAfterADropAndARefusedAttempt} uses
+     * instead of guessing how long a failed attempt takes.
+     */
+    private static void awaitReconnectingAttempt(List<OutboundEvent> events, int attempt,
+            long timeoutMillis) throws InterruptedException {
+        String marker = "attempt " + attempt + ",";
+        long deadline = System.currentTimeMillis() + timeoutMillis;
+        do {
+            synchronized (events) {
+                boolean seen = events.stream().anyMatch(e -> "status".equals(e.type())
+                        && "reconnecting".equals(e.state())
+                        && e.detail() != null && e.detail().contains(marker));
+                if (seen) {
+                    return;
+                }
+            }
+            Thread.sleep(20);
+        } while (System.currentTimeMillis() < deadline);
+        throw new AssertionError("reconnecting attempt " + attempt + " never arrived in time");
+    }
+
+    /**
+     * The channels event after the last {@code ready} status, the same "after" as
+     * {@link IrcSessionTest#onReadyIsSafeAfterAReconnectOnTheConnectionEventThread}.
+     */
+    private static OutboundEvent awaitChannelsEventAfterLastReady(List<OutboundEvent> events)
+            throws InterruptedException {
+        long deadline = System.currentTimeMillis() + 10_000;
+        do {
+            synchronized (events) {
+                int lastReadyIndex = -1;
+                for (int i = 0; i < events.size(); i++) {
+                    OutboundEvent event = events.get(i);
+                    if ("status".equals(event.type()) && "ready".equals(event.state())) {
+                        lastReadyIndex = i;
+                    }
+                }
+                for (int i = lastReadyIndex + 1; lastReadyIndex >= 0 && i < events.size(); i++) {
+                    if ("channels".equals(events.get(i).type())) {
+                        return events.get(i);
+                    }
+                }
+            }
+            Thread.sleep(20);
+        } while (System.currentTimeMillis() < deadline);
+        throw new AssertionError("no channels event arrived after the last ready status");
     }
 
     private static List<OutboundEvent> copyOf(List<OutboundEvent> events) {
@@ -322,7 +454,7 @@ class IrcSessionReconnectTest {
      * happened while the connection is still meant to stay open.
      */
     private static void acceptRegistrationSignaling(Socket socket, String nick,
-            java.util.concurrent.CountDownLatch signal) throws IOException {
+            CountDownLatch signal) throws IOException {
         socket.setSoTimeout(5000);
         BufferedReader in = new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
@@ -337,6 +469,35 @@ class IrcSessionReconnectTest {
         }
         out.write((":srv 001 " + nick + " :Welcome\r\n").getBytes(StandardCharsets.UTF_8));
         out.flush();
+        signal.countDown();
+        socket.setSoTimeout(0);
+        in.readLine();
+    }
+
+    /**
+     * Same as {@link #acceptRegistrationSignaling}, but drains the JOIN the client
+     * sends immediately once registered (irc-client tracks the channel client-side as
+     * soon as it sends that command, so nothing here needs to reply to it) before
+     * blocking on the client's eventual close, so that JOIN line is never mistaken
+     * for the close itself.
+     */
+    private static void acceptRegistrationJoinSignaling(Socket socket, String nick,
+            CountDownLatch signal) throws IOException {
+        socket.setSoTimeout(5000);
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        OutputStream out = socket.getOutputStream();
+        String line;
+        int seen = 0;
+        while (seen < 2 && (line = in.readLine()) != null) {
+            if (line.regionMatches(true, 0, "NICK", 0, 4)
+                    || line.regionMatches(true, 0, "USER", 0, 4)) {
+                seen++;
+            }
+        }
+        out.write((":srv 001 " + nick + " :Welcome\r\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+        in.readLine();
         signal.countDown();
         socket.setSoTimeout(0);
         in.readLine();
@@ -362,6 +523,31 @@ class IrcSessionReconnectTest {
         }
         out.write((":srv 001 " + nick + " :Welcome\r\n").getBytes(StandardCharsets.UTF_8));
         out.flush();
+    }
+
+    /**
+     * Same as {@link #registerThenDrop}, but drains the JOIN the client sends right
+     * after registering before dropping the connection: without reading it here, the
+     * server side of the socket can close while that write is still in flight, and
+     * the drop looks like a send failure rather than the lost connection this
+     * simulates.
+     */
+    private static void registerJoinThenDrop(Socket socket, String nick) throws IOException {
+        socket.setSoTimeout(5000);
+        BufferedReader in = new BufferedReader(
+                new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
+        OutputStream out = socket.getOutputStream();
+        String line;
+        int seen = 0;
+        while (seen < 2 && (line = in.readLine()) != null) {
+            if (line.regionMatches(true, 0, "NICK", 0, 4)
+                    || line.regionMatches(true, 0, "USER", 0, 4)) {
+                seen++;
+            }
+        }
+        out.write((":srv 001 " + nick + " :Welcome\r\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+        in.readLine();
     }
 
     private static void rejectRegistration(Socket socket) throws IOException {
