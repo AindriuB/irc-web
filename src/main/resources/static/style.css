@@ -30,7 +30,8 @@ header {
   border-bottom: 1px solid var(--line);
   background: var(--panel);
 }
-header h1 { font-size: 15px; margin: 0; letter-spacing: 0.04em; }
+header h1 { display: flex; align-items: center; gap: 6px; font-size: 15px; margin: 0; letter-spacing: 0.04em; }
+header h1 svg { width: 20px; height: 20px; flex: none; }
 .grow { flex: 1; }
 
 .state { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--dim); }
