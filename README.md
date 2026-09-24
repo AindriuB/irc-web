@@ -22,15 +22,19 @@ Everything in containers:
 
 ```bash
 docker compose -f docker/compose.yaml up -d --build
-# http://localhost:8081
+# http://localhost:8667
 ```
+
+A deployed instance runs on port 8667. The `docker/compose.yaml` stack above is the
+exception: it keeps 8081, part of the 808x range reserved for development, so it
+does not collide with a real deployment on the same host.
 
 Or the app on the host against a containerised IRC server, which is the better
 loop while changing the app:
 
 ```bash
 docker compose -f docker/compose.yaml up -d ergo
-mvn spring-boot:run
+mvn spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
 ```
 
 `local` means a different address in each case — loopback on the host, the compose

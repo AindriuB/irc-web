@@ -28,7 +28,7 @@ irc-web:
   admin-password: ${IRC_WEB_ADMIN_PASSWORD:}
 
 server:
-  port: 8081
+  port: 8667
 
 logging:
   level:

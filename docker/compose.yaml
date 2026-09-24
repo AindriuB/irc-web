@@ -30,6 +30,9 @@ services:
       # name. Loopback here would be this container, which runs no IRC server.
       LOCAL_IRC_HOST: ergo
       IRC_WEB_DATA_DIR: /data
+      # This stack is the dev loop, not a deployment, so it keeps the 808x
+      # range rather than the 8667 the image defaults to.
+      SERVER_PORT: 8081
       # Leave the password empty and the first browser to arrive is asked to
       # choose an account. Set it before the first start instead to create that
       # account up front, for an install nobody is going to be sitting at.
@@ -49,6 +52,14 @@ services:
       # traffic is plain HTTP, so put it behind a reverse proxy with TLS before
       # it is reachable from anywhere you do not control.
       - "8081:8081"
+    healthcheck:
+      # Overrides the image's default, which checks 8667: this stack runs the
+      # app on 8081 via SERVER_PORT above.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/health"]
+      interval: 15s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
 
   ergo:
     image: ghcr.io/ergochat/ergo:v2.14.0
