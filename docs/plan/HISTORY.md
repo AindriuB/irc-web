@@ -17,6 +17,34 @@ in the same commit.
 **Cost:** <what was hard, what was tried and abandoned, what not to retry.>
 -->
 
+## 2026-09-24 — Bad credentials are now rejected on save and their errors shown by the form
+
+Prompted by an incident: a Twitch password saved as the whole `PASS
+oauth:…` line made irc-client reject it at registration; irc-web's
+`IrcSession` caught the failure and set `bot = null` without calling
+`stop()`, orphaning the bot, whose own reconnect loop then ran every 60s for
+hours; irc-client 1.1.0's exception message wrote the token into the
+container log on each attempt, and the log was only cleared by recreating
+the container. Two fixes have landed from that: `CredentialRules`, checked
+in `DirectoryService.saveProfile` before encryption and persistence, now
+rejects a server password containing whitespace, CR, LF, NUL or a leading
+`:` (with a case-insensitive hint if it looks like a whole `PASS` line), a
+SASL username containing whitespace or a leading `:`, and a SASL password
+containing CR, LF or NUL — with a fixed 400 message that never echoes the
+value. And `app.js` now shows the save-failure and connect-failure reasons
+next to the form in `#profile-state` (aria-live, `textContent` only), clearing
+them on a successful save, a server switch, `connecting` or `ready`, while
+password fields keep what was typed but are never echoed.
+
+**Cost:** the first attempt at `CredentialRules` rejected spaces in SASL
+passwords because the coordinator's spec was wrong; review caught it by
+checking irc-client's `Authenticate.plain`, which allows spaces in SASL
+PLAIN. The library-side leak (writing the raw token into exception messages)
+is fixed in irc-client 1.2.1, not yet released — irc-web still pins 1.1.0.
+The orphaned-bot half of the incident (`stop()` never called, 60s reconnect
+loop) is not fixed by this work; that's task 02, still open, and it's next
+because it's the part that actually leaves a bot running unattended.
+
 ## 2026-09-24 — Brand assets and manifest now serve without login or setup
 
 `/brand/**` and `/manifest.webmanifest` are permitted in `SecurityConfig` and

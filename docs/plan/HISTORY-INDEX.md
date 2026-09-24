@@ -23,3 +23,4 @@ no row is one `planner` cannot find, and will re-plan.
 | 2026-09-24 | 01 | Fixed-blue branding: favicon/manifest icons, login/setup logo, CSS brand variables | ## 2026-09-24 — Fixed-blue branding: favicons, manifest, login/setup logo |
 | 2026-09-24 | 01, 02, 03, 04 | Remember-me + 401 on /ws + client keep-alive fix silent 30-min session expiry; default port moved to 8667 | ## 2026-09-24 — Fixed silent session expiry, moved the default port to 8667 |
 | 2026-09-24 | 02 | Brand assets and manifest serve unauthenticated before login and before first-run setup, with a BrandingIT covering path traversal | ## 2026-09-24 — Brand assets and manifest now serve without login or setup |
+| 2026-09-24 | 01, 03 | CredentialRules rejects unusable server/SASL passwords and usernames on profile save; app.js shows save- and connect-failure reasons by the form without echoing credentials | ## 2026-09-24 — Bad credentials are now rejected on save and their errors shown by the form |
