@@ -59,7 +59,7 @@ async function api(path, options = {}) {
   });
 
   if (response.status === 401) {
-    location.href = '/login.html';
+    redirectToLogin();
     throw new Error('signed out');
   }
   if (!response.ok) {
@@ -71,6 +71,11 @@ async function api(path, options = {}) {
     throw new Error(detail);
   }
   return response.status === 204 ? null : response.json();
+}
+
+/** The one place a 401 sends the page away, so the test can observe it without jsdom navigating. */
+function redirectToLogin() {
+  location.href = '/login.html';
 }
 
 function readCookie(name) {
@@ -278,12 +283,37 @@ async function changePassword() {
  * first thing to find out is whether one is already running. Opening the socket
  * is how you ask.
  */
+const PING_INTERVAL_MS = 5 * 60 * 1000;
+let pingIntervalId = null;
+
+/**
+ * The HTTP session and the socket are separate, and only the session carries an
+ * expiry. Pinging a cheap authenticated endpoint while the socket sits open is
+ * what stops it from lapsing under a tab nobody has touched in a while.
+ */
+function startPing() {
+  pingIntervalId = setInterval(() => {
+    // A failed ping says nothing worth acting on itself: a 401 already sends
+    // the page to the login screen via api(), and anything else is retried by
+    // the next ping five minutes from now.
+    api('/api/me').catch(() => {});
+  }, PING_INTERVAL_MS);
+}
+
+function stopPing() {
+  if (pingIntervalId !== null) {
+    clearInterval(pingIntervalId);
+    pingIntervalId = null;
+  }
+}
+
 function openSocket() {
   const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/irc`;
   socket = new WebSocket(url);
 
   socket.addEventListener('open', () => {
     reopenDelay = 0;
+    startPing();
     if (pendingConnect) {
       send(pendingConnect);
       pendingConnect = null;
@@ -295,6 +325,7 @@ function openSocket() {
     // Losing the socket says nothing about the IRC connection, which is still
     // sitting in its channels. Get the socket back and it replays what was
     // said in the meantime.
+    stopPing();
     setState('disconnected', 'lost the page connection, retrying');
     scheduleReopen();
   });
@@ -303,7 +334,22 @@ function openSocket() {
 
 function scheduleReopen() {
   reopenDelay = reopenDelay ? Math.min(reopenDelay * 2, 15000) : 1000;
-  setTimeout(openSocket, reopenDelay);
+  setTimeout(reopenAfterProbe, reopenDelay);
+}
+
+/**
+ * A dropped socket might mean the session is still good and the network blipped,
+ * or it might mean the session is gone and reopening would just loop forever.
+ * Ask over plain HTTP first, which is cheaper than a socket handshake and goes
+ * through the same 401 handling as everything else.
+ */
+async function reopenAfterProbe() {
+  try {
+    await api('/api/me');
+    openSocket();
+  } catch (e) {
+    if (e.message !== 'signed out') { scheduleReopen(); }
+  }
 }
 
 function connect(event) {
