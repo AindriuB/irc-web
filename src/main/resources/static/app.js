@@ -133,6 +133,16 @@ async function loadServers(selectId) {
 
 // ------------------------------------------------------------------ profile
 
+/**
+ * `#profile-state` doubles as the place a failed save or a failed connect
+ * shows up, next to the form the user has to fix. A normal status message
+ * clears whatever error class a previous failure left behind.
+ */
+function setProfileState(text, isError = false) {
+  ui.profileState.textContent = text;
+  ui.profileState.classList.toggle('error-text', isError);
+}
+
 async function loadProfile() {
   const id = ui.server.value;
   if (!id) { return; }
@@ -140,7 +150,7 @@ async function loadProfile() {
   try {
     profile = await api(`/api/servers/${encodeURIComponent(id)}/profile`);
   } catch (e) {
-    ui.profileState.textContent = `could not load saved details: ${e.message}`;
+    setProfileState(`could not load saved details: ${e.message}`);
     return;
   }
 
@@ -157,9 +167,9 @@ async function loadProfile() {
   ui.saslPass.placeholder = profile.hasSaslPassword
     ? 'stored - leave blank to keep it' : '';
 
-  ui.profileState.textContent = profile.updatedAt
+  setProfileState(profile.updatedAt
     ? `saved ${new Date(profile.updatedAt).toLocaleString()}`
-    : 'nothing saved for this server yet';
+    : 'nothing saved for this server yet');
 }
 
 async function saveProfile() {
@@ -175,9 +185,12 @@ async function saveProfile() {
   };
   try {
     await api(`/api/servers/${encodeURIComponent(id)}/profile`, { method: 'PUT', body });
+    // Success rewrites the field with the saved state and clears whatever
+    // error was there before, so the password inputs are only left untouched
+    // (and any error left in place) on the failure path below.
     await loadProfile();
   } catch (e) {
-    ui.profileState.textContent = `could not save: ${e.message}`;
+    setProfileState(`could not save: ${e.message}`, true);
   }
 }
 
@@ -391,11 +404,30 @@ function disconnect() {
 
 function handle(event) {
   switch (event.type) {
-    case 'status':
+    case 'status': {
       if (event.nick) { myNick = event.nick; }
+      // Captured before setState overwrites the class: a connect that fails
+      // is reported as `disconnected`, indistinguishable from any other
+      // disconnection once the state has moved on.
+      const wasConnecting = ui.state.classList.contains('connecting');
       setState(event.state, event.detail);
       if (event.detail) { append(STATUS_BUFFER, 'system', null, event.detail); }
+      // A user-initiated disconnect carries a detail too ("left the network",
+      // IrcWebSocketHandler#handle), so `wasConnecting` is what actually tells
+      // the two apart: the handler processes one command at a time, blocked
+      // inside `connect()` for the whole attempt, so a disconnect clicked
+      // during "connecting" cannot reach the server until that call returns
+      // and the state has already moved on to `ready` or a failed `disconnected`.
+      if (event.state === 'disconnected' && event.detail && wasConnecting) {
+        setProfileState(event.detail, true);
+      } else if ((event.state === 'connecting' || event.state === 'ready')
+          && ui.profileState.classList.contains('error-text')) {
+        // A new attempt, or one that made it all the way to ready: whatever
+        // failure was showing next to the form no longer applies.
+        setProfileState('', false);
+      }
       break;
+    }
 
     case 'message': {
       // An action arrives as an ordinary message wrapped in CTCP markers. Left
