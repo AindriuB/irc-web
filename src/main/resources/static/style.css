@@ -39,7 +39,7 @@ header h1 svg { width: 20px; height: 20px; flex: none; }
 
 .state { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line); color: var(--dim); }
 .state.ready { color: var(--good); border-color: var(--good); }
-.state.connecting { color: var(--warn); border-color: var(--warn); }
+.state.connecting, .state.reconnecting { color: var(--warn); border-color: var(--warn); }
 .state.disconnected { color: var(--bad); border-color: var(--bad); }
 
 main { flex: 1; display: flex; min-height: 0; }

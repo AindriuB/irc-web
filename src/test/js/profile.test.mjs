@@ -4,86 +4,12 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { JSDOM } from 'jsdom';
-import { readFileSync } from 'node:fs';
-
-const STATIC = new URL('../../main/resources/static/', import.meta.url);
-const source = readFileSync(new URL('app.js', STATIC), 'utf8');
+import { fakeFetch, page, settle } from './helpers.mjs';
 
 // Task 01's PASS_LINE_HINT: the message the server sends back for a server
 // password that looks like a whole PASS line rather than just the token.
 const HINT = 'Enter just the token (oauth:...), not the whole PASS line';
 const SECRET = 'PASS oauth:sekrit-token-123';
-
-const SERVER = {
-  id: 'srv1', name: 'Test', host: 'irc.example', port: 6697,
-  tls: true, sasl: false, registered: false, features: [], notes: '',
-};
-
-/** A fake WebSocket that records every instance created and lets the test drive it. */
-function fakeSocketClass(sockets) {
-  return class {
-    constructor(url) {
-      this.url = url;
-      this.listeners = {};
-      sockets.push(this);
-    }
-
-    addEventListener(type, handler) {
-      (this.listeners[type] ||= []).push(handler);
-    }
-
-    send() {}
-
-    close() {}
-
-    emit(type, event = {}) {
-      for (const handler of this.listeners[type] || []) { handler(event); }
-    }
-  };
-}
-
-/** A GET/PUT-aware fetch stub: servers, an (empty) stored profile, and a PUT outcome. */
-function fakeFetch({ putResult } = {}) {
-  return async (path, options = {}) => {
-    const method = (options.method || 'GET').toUpperCase();
-    if (path === '/api/me') {
-      return { ok: true, status: 200, json: async () => ({ username: 'tester' }) };
-    }
-    if (path === '/api/servers') {
-      return { ok: true, status: 200, json: async () => [SERVER] };
-    }
-    if (path.endsWith('/profile') && method === 'GET') {
-      return { ok: true, status: 200, json: async () => ({}) };
-    }
-    if (path.endsWith('/profile') && method === 'PUT') {
-      return putResult ? putResult() : { ok: true, status: 200, json: async () => ({}) };
-    }
-    return { ok: true, status: 200, json: async () => ({}) };
-  };
-}
-
-function page(fetchImpl) {
-  const dom = new JSDOM(readFileSync(new URL('index.html', STATIC), 'utf8'),
-      { runScripts: 'outside-only', url: 'http://localhost/' });
-  const { window } = dom;
-
-  const sockets = [];
-  window.fetch = fetchImpl;
-  window.WebSocket = fakeSocketClass(sockets);
-  window.eval(source);
-
-  return { window, document: window.document, sockets };
-}
-
-function flush() {
-  return new Promise((resolve) => { setImmediate(resolve); });
-}
-
-/** Several microtask hops: server load, then profile load, both chained without awaits. */
-async function settle() {
-  await flush(); await flush(); await flush(); await flush();
-}
 
 test('a failed save shows the server error next to the form, styled as an error', async () => {
   const ui = page(fakeFetch({

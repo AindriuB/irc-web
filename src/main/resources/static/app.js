@@ -543,10 +543,11 @@ function setState(state, detail) {
   ui.state.textContent = detail ? `${state} — ${detail}` : state;
   ui.state.className = `state ${state}`;
   const live = state === 'ready';
+  const busy = state === 'connecting' || state === 'reconnecting';
   ui.input.disabled = !live;
   ui.sayButton.disabled = !live;
-  ui.stop.disabled = !(live || state === 'connecting');
-  ui.go.disabled = live || state === 'connecting';
+  ui.stop.disabled = !(live || busy);
+  ui.go.disabled = live || busy;
   if (state === 'disconnected') {
     memberLists.clear();
     renderMembers();
