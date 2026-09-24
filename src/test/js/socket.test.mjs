@@ -9,42 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'node:fs';
-
-const STATIC = new URL('../../main/resources/static/', import.meta.url);
-const source = readFileSync(new URL('app.js', STATIC), 'utf8');
-
-/** A fake WebSocket that records every instance created and lets the test drive it. */
-function fakeSocketClass(sockets) {
-  return class {
-    constructor(url) {
-      this.url = url;
-      this.listeners = {};
-      sockets.push(this);
-    }
-
-    addEventListener(type, handler) {
-      (this.listeners[type] ||= []).push(handler);
-    }
-
-    send() {}
-
-    close() {}
-
-    emit(type, event = {}) {
-      for (const handler of this.listeners[type] || []) { handler(event); }
-    }
-  };
-}
-
-/**
- * Timer callbacks that go on to `await fetch(...)` need the microtask queue
- * drained after `tick()`, which only runs the timer callback itself. `setImmediate`
- * is real (only `setInterval`/`setTimeout` are mocked), so it is a way to let
- * those microtasks settle before assertions run.
- */
-function flush() {
-  return new Promise((resolve) => { setImmediate(resolve); });
-}
+import { STATIC, source, fakeSocketClass, flush } from './helpers.mjs';
 
 function page() {
   const dom = new JSDOM(readFileSync(new URL('index.html', STATIC), 'utf8'),
