@@ -68,7 +68,7 @@ public class SecurityConfig {
                 // /health is public so a container probe works without credentials;
                 // it exposes a count and nothing else.
                 .requestMatchers("/login.html", "/login.css", "/api/login", "/health", "/error",
-                        "/setup.html", "/api/setup")
+                        "/setup.html", "/api/setup", "/brand/**", "/manifest.webmanifest")
                     .permitAll()
                 .anyRequest().authenticated())
             .formLogin(form -> form

@@ -21,9 +21,15 @@ import jakarta.servlet.http.HttpServletResponse;
  */
 public class SetupRequiredFilter extends OncePerRequestFilter {
 
-    /** Reachable during setup: the page itself, its stylesheet, its API, and probes. */
+    /**
+     * Reachable during setup: the page itself, its stylesheet, its API, and probes.
+     * {@code /manifest.webmanifest} and anything under {@code /brand/} are also
+     * reachable, matched separately below since the latter is a prefix, not an
+     * exact path - browsers fetch these before anyone has signed in.
+     */
     private static final Set<String> OPEN = Set.of(
-            "/setup.html", "/login.css", "/api/setup", "/health", "/error", "/favicon.ico");
+            "/setup.html", "/login.css", "/api/setup", "/health", "/error", "/favicon.ico",
+            "/manifest.webmanifest");
 
     private final AppUserService users;
 
@@ -48,7 +54,7 @@ public class SetupRequiredFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (OPEN.contains(path)) {
+        if (OPEN.contains(path) || path.startsWith("/brand/")) {
             chain.doFilter(request, response);
             return;
         }
