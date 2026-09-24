@@ -11,6 +11,7 @@ import java.util.EnumSet;
 import java.util.Set;
 
 import javax.crypto.Cipher;
+import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
@@ -152,6 +153,30 @@ public class SecretCodec {
             return Base64.getEncoder().encodeToString(combined);
         } catch (Exception e) {
             throw new IllegalStateException("could not encrypt a stored secret", e);
+        }
+    }
+
+    /**
+     * A key for signing remember-me tokens, derived from this codec's key rather
+     * than configured separately. A second secret to generate, store and rotate
+     * would just be another way to lose remember-me sessions; deriving it here
+     * means backing up {@code secret.key} (or setting {@code IRC_WEB_SECRET_KEY})
+     * is the only thing that has to be done once, for both.
+     *
+     * @return a hex-encoded HMAC-SHA256 of a fixed label under this codec's key
+     */
+    public String rememberMeKey() {
+        try {
+            Mac mac = Mac.getInstance("HmacSHA256");
+            mac.init(key);
+            byte[] digest = mac.doFinal("irc-web.remember-me".getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException("could not derive the remember-me key", e);
         }
     }
 

@@ -28,15 +28,35 @@ final class TestHttp {
 
     /** Nobody signed in, for asserting that the wall is there. */
     static RestTemplate anonymous(int port) {
-        return build(port, null, null);
+        return build(port, null, null, true);
     }
 
     static RestTemplate as(int port, String username, String password) {
-        return build(port, username, password);
+        return build(port, username, password, true);
     }
 
-    private static RestTemplate build(int port, String username, String password) {
-        RestTemplate rest = new RestTemplate(new SimpleClientHttpRequestFactory());
+    /**
+     * Nobody signed in, and a redirect comes back as a redirect. Everything else
+     * here follows one, which is right for a browser but hides the status code a
+     * test on "/ws/**" vs "/" needs to tell 401 from 302 apart.
+     */
+    static RestTemplate anonymousNoRedirects(int port) {
+        return build(port, null, null, false);
+    }
+
+    private static RestTemplate build(int port, String username, String password,
+            boolean followRedirects) {
+        SimpleClientHttpRequestFactory factory = followRedirects
+                ? new SimpleClientHttpRequestFactory()
+                : new SimpleClientHttpRequestFactory() {
+                    @Override
+                    protected void prepareConnection(java.net.HttpURLConnection connection,
+                            String httpMethod) throws IOException {
+                        super.prepareConnection(connection, httpMethod);
+                        connection.setInstanceFollowRedirects(false);
+                    }
+                };
+        RestTemplate rest = new RestTemplate(factory);
         rest.setUriTemplateHandler(new DefaultUriBuilderFactory("http://localhost:" + port));
 
         // A 401 or a 404 is something a test asserts on, not something that should
