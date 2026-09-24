@@ -21,9 +21,15 @@ import jakarta.servlet.http.HttpServletResponse;
  */
 public class SetupRequiredFilter extends OncePerRequestFilter {
 
-    /** Reachable during setup: the page itself, its stylesheet, its API, and probes. */
+    /**
+     * Reachable during setup: the page itself, its stylesheet, its API, and probes.
+     * {@code /manifest.webmanifest} and anything under {@code /brand/} are also
+     * reachable, matched separately below since the latter is a prefix, not an
+     * exact path - browsers fetch these before anyone has signed in.
+     */
     private static final Set<String> OPEN = Set.of(
-            "/setup.html", "/login.css", "/api/setup", "/health", "/error", "/favicon.ico");
+            "/setup.html", "/login.css", "/api/setup", "/health", "/error", "/favicon.ico",
+            "/manifest.webmanifest");
 
     private final AppUserService users;
 
@@ -34,7 +40,16 @@ public class SetupRequiredFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
             FilterChain chain) throws ServletException, IOException {
-        String path = request.getRequestURI();
+        // The servlet path (plus any path info) is what the container has already
+        // parsed the request line into, rather than the raw URI - so an encoded or
+        // traversal-laden target like "/brand/..;/index.html" cannot slip past the
+        // "/brand/" prefix check below by looking like something else to this
+        // filter than it looks like to whatever finally serves the response. There
+        // is no context path here, so nothing else needs stripping.
+        String path = request.getServletPath();
+        if (request.getPathInfo() != null) {
+            path = path + request.getPathInfo();
+        }
 
         if (!users.needsSetup()) {
             // Once there is an account the setup page is not just useless but
@@ -48,7 +63,7 @@ public class SetupRequiredFilter extends OncePerRequestFilter {
             return;
         }
 
-        if (OPEN.contains(path)) {
+        if (OPEN.contains(path) || path.startsWith("/brand/")) {
             chain.doFilter(request, response);
             return;
         }
