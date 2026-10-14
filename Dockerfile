@@ -1,7 +1,7 @@
 # Two stages: the build tools are large and have no business in the image that
 # gets deployed.
 
-FROM maven:3-eclipse-temurin-26 AS build
+FROM maven:3-eclipse-temurin-27 AS build
 WORKDIR /build
 
 # Dependencies resolve from their own layer, so editing a source file does not
